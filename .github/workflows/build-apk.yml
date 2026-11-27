@@ -112,6 +112,44 @@ jobs:
             echo "No GOOGLE_SERVICES_JSON secret: building without it (Firebase features disabled at runtime)"
           fi
 
+      # FIX 3: google-services.json must contain a client whose package name
+      # equals the app's applicationId. If it does not, use the package name
+      # that is inside the json (so the build never fails with
+      # "No matching client found for package name").
+      - name: Match applicationId to google-services.json
+        run: |
+          python3 - <<'PY'
+          import json, os, re, pathlib
+
+          gj = pathlib.Path("app/google-services.json")
+          if not gj.exists():
+              print("No google-services.json, keeping applicationId")
+              raise SystemExit(0)
+
+          data = json.loads(gj.read_text(encoding="utf-8"))
+          pkgs = []
+          for c in data.get("client", []):
+              name = c.get("client_info", {}).get("android_client_info", {}).get("package_name")
+              if name and name not in pkgs:
+                  pkgs.append(name)
+          print("Packages found in google-services.json:", pkgs)
+          if not pkgs:
+              raise SystemExit("google-services.json has no Android client. Register an Android app in Firebase and download the file again.")
+
+          gradle = pathlib.Path("app/build.gradle.kts")
+          g = gradle.read_text(encoding="utf-8")
+          m = re.search(r'applicationId\s*=\s*"([^"]+)"', g)
+          current = m.group(1)
+          if current in pkgs:
+              print("applicationId already matches:", current)
+              raise SystemExit(0)
+
+          target = pkgs[0]
+          g = re.sub(r'applicationId\s*=\s*"[^"]+"', 'applicationId = "%s"' % target, g, count=1)
+          gradle.write_text(g, encoding="utf-8")
+          print("applicationId changed from", current, "to", target)
+          PY
+
       - name: Create debug keystore
         run: |
           keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
