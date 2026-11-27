@@ -106,10 +106,15 @@ jobs:
           GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$GSJ" ]; then
-            printf '%s' "$GSJ" > app/google-services.json
-            echo "google-services.json added from secret"
+            printf '%s' "$GSJ" > /tmp/gsj.json
+            if grep -q "android_client_info" /tmp/gsj.json; then
+              cp /tmp/gsj.json app/google-services.json
+              echo "google-services.json added from secret"
+            else
+              echo "::warning::The GOOGLE_SERVICES_JSON secret does not contain an Android app (android_client_info missing). Secret ignored."
+            fi
           else
-            echo "No GOOGLE_SERVICES_JSON secret: building without it (Firebase features disabled at runtime)"
+            echo "No GOOGLE_SERVICES_JSON secret: using app/google-services.json if it exists in the repo"
           fi
 
       # FIX 3: google-services.json must contain a client whose package name
