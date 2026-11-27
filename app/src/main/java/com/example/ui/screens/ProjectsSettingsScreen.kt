@@ -322,9 +322,10 @@ fun ProjectsSettingsScreen(
 
             GlowingFrameCard(modifier = Modifier.fillMaxWidth(), glowing = false) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Admin-Managed Gemini AI Status & Protected Control Panel Entry (key hidden from regular users)
+                    // Admin-Managed Gemini AI Proxy Status & Protected Control Panel Entry
                     val aiEnabled = GeminiConfig.isAiEnabled(context)
-                    val aiConfigured = GeminiConfig.getProxyUrl(context).isNotBlank() || GeminiConfig.resolveApiKey(context).isNotBlank()
+                    val activeProxy = GeminiConfig.resolveProxyUrl(context)
+                    val isCustomProxy = GeminiConfig.getCustomProxyUrl(context).isNotBlank()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.AdminPanelSettings, null, tint = ext.accent, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
@@ -334,11 +335,11 @@ fun ProjectsSettingsScreen(
                     Text(
                         text = when {
                             !aiEnabled -> "خدمة الذكاء الاصطناعي متوقفة مؤقتاً من لوحة تحكم المشرف."
-                            aiConfigured -> "الذكاء الاصطناعي مفعّل وجاهز للجميع ✓ (المفتاح محمي ومخفي عن المستخدمين)"
-                            else -> "إعدادات الذكاء الاصطناعي مخفية ومُدارة عبر لوحة تحكم المشرف."
+                            isCustomProxy -> "الذكاء الاصطناعي مفعّل للجميع عبر خادم المشرف المخصص ✓ (بدون تسجيل دخول أو مفتاح)"
+                            else -> "الذكاء الاصطناعي مفعّل وجاهز تلقائياً للجميع ✓ (${activeProxy.removePrefix("https://")})"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (aiEnabled && aiConfigured) ext.success else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (aiEnabled) ext.success else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedGlowButton(

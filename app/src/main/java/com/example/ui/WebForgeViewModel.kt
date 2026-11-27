@@ -168,6 +168,13 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     private var lintJob: Job? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
+    private sealed interface LastAiRequest {
+        data class GenerateSite(val prompt: String, val mobileAppMode: Boolean) : LastAiRequest
+        data class QuickAction(val action: AiQuickAction) : LastAiRequest
+        data class Chat(val message: String) : LastAiRequest
+    }
+    private var lastAiRequest: LastAiRequest? = null
+
     init {
         GeminiConfig.init(context)
         observeConnectivity()
@@ -1013,6 +1020,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     // Gemini AI Studio Assistant
     fun generateSiteFromPrompt(prompt: String, mobileAppMode: Boolean = false) {
         if (prompt.isBlank()) return
+        lastAiRequest = LastAiRequest.GenerateSite(prompt, mobileAppMode)
         if (_uiState.value.isEffectiveOffline) {
             _uiState.update { it.copy(aiTaskState = AiTaskState.Error(strings().offlineDeployBlocked)) }
             return
@@ -1044,16 +1052,17 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                 } else {
-                    _uiState.update { it.copy(aiTaskState = AiTaskState.Error("Gemini returned empty output.")) }
+                    _uiState.update { it.copy(aiTaskState = AiTaskState.Error("لم يُرجع الذكاء الاصطناعي أي كود. يرجى إعادة المحاولة.")) }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(aiTaskState = AiTaskState.Error(e.localizedMessage ?: "AI generation failed")) }
+                _uiState.update { it.copy(aiTaskState = AiTaskState.Error(e.localizedMessage ?: "فشل إنشاء المشروع بالذكاء الاصطناعي. يرجى إعادة المحاولة.")) }
             }
         }
     }
 
     fun runAiQuickAction(action: AiQuickAction) {
         val st = _uiState.value
+        lastAiRequest = LastAiRequest.QuickAction(action)
         if (st.isEffectiveOffline) {
             _uiState.update { it.copy(aiTaskState = AiTaskState.Error(strings().offlineDeployBlocked)) }
             return
@@ -1066,14 +1075,15 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             }.onSuccess { (summary, proposed) ->
                 _uiState.update { it.copy(aiTaskState = AiTaskState.Success(summary, proposed)) }
             }.onFailure { err ->
-                _uiState.update { it.copy(aiTaskState = AiTaskState.Error(err.localizedMessage ?: "AI action failed")) }
+                _uiState.update { it.copy(aiTaskState = AiTaskState.Error(err.localizedMessage ?: "فشل تنفيذ الأمر الذكي. يرجى إعادة المحاولة.")) }
             }
         }
     }
 
-    fun sendAiChatMessage(message: String) {
+    fun sendAiChatMessage(message: String, appendUserMessage: Boolean = true) {
         if (message.isBlank()) return
         val st = _uiState.value
+        lastAiRequest = LastAiRequest.Chat(message)
         if (st.isEffectiveOffline) {
             _uiState.update { it.copy(aiTaskState = AiTaskState.Error(strings().offlineDeployBlocked)) }
             return
@@ -1081,7 +1091,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         val preferAr = st.settings.language.isRtl
         _uiState.update {
             it.copy(
-                aiChatHistory = it.aiChatHistory + AiChatMessage(isUser = true, text = message),
+                aiChatHistory = if (appendUserMessage) it.aiChatHistory + AiChatMessage(isUser = true, text = message) else it.aiChatHistory,
                 aiTaskState = AiTaskState.Loading,
             )
         }
@@ -1101,9 +1111,18 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                 }
             }.onFailure { err ->
                 _uiState.update {
-                    it.copy(aiTaskState = AiTaskState.Error(err.localizedMessage ?: "AI chat failed"))
+                    it.copy(aiTaskState = AiTaskState.Error(err.localizedMessage ?: "تعذر إكمال المحادثة الذكية. يرجى إعادة المحاولة."))
                 }
             }
+        }
+    }
+
+    fun retryLastAiAction() {
+        when (val req = lastAiRequest) {
+            is LastAiRequest.GenerateSite -> generateSiteFromPrompt(req.prompt, req.mobileAppMode)
+            is LastAiRequest.QuickAction -> runAiQuickAction(req.action)
+            is LastAiRequest.Chat -> sendAiChatMessage(req.message, appendUserMessage = false)
+            null -> _uiState.update { it.copy(aiTaskState = AiTaskState.Idle) }
         }
     }
 
@@ -1264,7 +1283,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             projectRepo.clearAllProjects()
             settingsRepo.clearAll()
-            GeminiConfig.saveUserKey("", context)
+            GeminiConfig.resetCustomSettings(context)
             createBlankNewProject()
             emitMessage(strings().savedSuccess)
         }

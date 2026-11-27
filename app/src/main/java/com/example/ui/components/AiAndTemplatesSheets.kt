@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.DriveFileRenameOutline
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -489,6 +490,7 @@ fun GeminiAiStudioSheet(
     onApplyProposedCode: (String) -> Unit,
     onApplyAndPreview: (String) -> Unit,
     onApplyAndBuildApk: (String) -> Unit,
+    onRetryLastAction: () -> Unit,
     onDiscardTask: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -684,10 +686,30 @@ fun GeminiAiStudioSheet(
                 is AiTaskState.Error -> {
                     Surface(
                         color = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("ai_error_card"),
                     ) {
-                        Text(aiTaskState.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = aiTaskState.message,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedGlowButton(
+                                    text = if (isRtl) "إعادة المحاولة" else "Retry",
+                                    icon = Icons.Rounded.Refresh,
+                                    onClick = onRetryLastAction,
+                                    modifier = Modifier.weight(1f),
+                                    testTag = "ai_retry_button",
+                                )
+                                TextButton(onClick = onDiscardTask) {
+                                    Text(strings.close)
+                                }
+                            }
+                        }
                     }
                 }
                 is AiTaskState.Success -> {

@@ -1,14 +1,15 @@
 package com.example.ai
 
 import android.content.Context
-import com.example.BuildConfig
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -24,10 +25,16 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Reads Gemini config: 1) Admin Proxy URL (no client key needed), 2) Admin/local key, 3) BuildConfig.GEMINI_API_KEY. */
+/**
+ * Global proxy configuration for Gemini REST requests.
+ * Uses DEFAULT_PROXY_URL automatically for all users (admin, members, guests) without sign-in
+ * and without storing any API key on the client device.
+ */
 object GeminiConfig {
+    const val DEFAULT_PROXY_URL = "https://late-feather-3c04webforge-ai.alrwysm239.workers.dev"
+    const val MODEL = "gemini-2.5-flash"
+
     private const val PREFS_NAME = "webforge_gemini_prefs"
-    private const val KEY_API_KEY = "gemini_api_key"
     private const val KEY_PROXY_URL = "gemini_proxy_url"
     private const val KEY_AI_ENABLED = "gemini_ai_enabled"
     private const val KEY_ADMIN_PW_SALT = "admin_pw_salt"
@@ -40,31 +47,67 @@ object GeminiConfig {
         appContext = context.applicationContext
     }
 
-    fun getSavedUserKey(context: Context? = appContext): String {
-        val ctx = context?.applicationContext ?: appContext ?: return ""
-        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_API_KEY, "")
-            ?.trim()
-            .orEmpty()
+    /**
+     * Validates an optional admin proxy URL.
+     * Blank input is allowed and means "use DEFAULT_PROXY_URL".
+     * Non-blank input MUST start with "https://" after trim().
+     */
+    fun validateProxyUrl(raw: String): Result<String> {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return Result.success("")
+        if (!trimmed.startsWith("https://")) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "رابط الخادم الوسيط غير صالح: يجب أن يبدأ بـ https:// بعد إزالة المسافات."
+                )
+            )
+        }
+        val normalized = trimmed.removeSuffix("/v1beta").trimEnd('/')
+        val afterScheme = normalized.removePrefix("https://")
+        val host = afterScheme.substringBefore('/')
+        if (afterScheme.isBlank() ||
+            trimmed.any { it.isWhitespace() } ||
+            host.isBlank() ||
+            !host.contains('.')
+        ) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "رابط الخادم الوسيط غير مكتمل: أدخل عنوان خادم صحيح يبدأ بـ https:// مثل $DEFAULT_PROXY_URL"
+                )
+            )
+        }
+        return Result.success(normalized)
     }
 
-    fun saveUserKey(key: String, context: Context? = appContext) {
-        val ctx = context?.applicationContext ?: appContext ?: return
-        val clean = key.trim()
-        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .apply {
-                if (clean.isEmpty()) remove(KEY_API_KEY) else putString(KEY_API_KEY, clean)
-            }
-            .commit()
-    }
-
-    fun getProxyUrl(context: Context? = appContext): String {
+    /** Returns the custom proxy URL configured by the admin, or empty string if none is set. */
+    fun getCustomProxyUrl(context: Context? = appContext): String {
         val ctx = context?.applicationContext ?: appContext ?: return ""
-        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_PROXY_URL, "")
             ?.trim()
             .orEmpty()
+        return validateProxyUrl(saved).getOrDefault("")
+    }
+
+    /** Returns the effective proxy URL: admin override if valid & non-blank, otherwise DEFAULT_PROXY_URL. */
+    fun resolveProxyUrl(context: Context? = appContext): String {
+        val custom = getCustomProxyUrl(context)
+        return custom.ifBlank { DEFAULT_PROXY_URL }
+    }
+
+    fun getProxyUrl(context: Context? = appContext): String = resolveProxyUrl(context)
+
+    fun saveCustomProxyUrl(rawUrl: String, context: Context? = appContext): Result<String> {
+        val validated = validateProxyUrl(rawUrl)
+        val clean = validated.getOrElse { return Result.failure(it) }
+        val ctx = context?.applicationContext ?: appContext
+        ctx?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.apply {
+                if (clean.isEmpty()) remove(KEY_PROXY_URL) else putString(KEY_PROXY_URL, clean)
+            }
+            ?.commit()
+        return Result.success(clean)
     }
 
     fun isAiEnabled(context: Context? = appContext): Boolean {
@@ -89,7 +132,7 @@ object GeminiConfig {
 
     fun applyPublicRuntime(aiEnabled: Boolean, proxyUrl: String, context: Context? = appContext) {
         val ctx = context?.applicationContext ?: appContext ?: return
-        val cleanProxy = proxyUrl.trim()
+        val cleanProxy = validateProxyUrl(proxyUrl).getOrDefault("")
         ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_AI_ENABLED, aiEnabled)
@@ -102,81 +145,75 @@ object GeminiConfig {
     fun applyAdminCloudSettings(
         aiEnabled: Boolean,
         proxyUrl: String,
-        geminiApiKey: String,
         passwordSalt: String,
         passwordHash: String,
         context: Context? = appContext,
     ) {
         val ctx = context?.applicationContext ?: appContext ?: return
-        val cleanProxy = proxyUrl.trim()
-        val cleanKey = geminiApiKey.trim()
+        val cleanProxy = validateProxyUrl(proxyUrl).getOrDefault("")
         ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_AI_ENABLED, aiEnabled)
             .apply {
                 if (cleanProxy.isEmpty()) remove(KEY_PROXY_URL) else putString(KEY_PROXY_URL, cleanProxy)
-                if (cleanKey.isEmpty()) remove(KEY_API_KEY) else putString(KEY_API_KEY, cleanKey)
                 if (passwordSalt.isBlank()) remove(KEY_ADMIN_PW_SALT) else putString(KEY_ADMIN_PW_SALT, passwordSalt)
                 if (passwordHash.isBlank()) remove(KEY_ADMIN_PW_HASH) else putString(KEY_ADMIN_PW_HASH, passwordHash)
             }
             .commit()
     }
 
-    fun resolveApiKey(context: Context? = appContext): String {
-        val userKey = getSavedUserKey(context)
-        if (userKey.isNotEmpty()) return userKey
-        val buildKey = BuildConfig.GEMINI_API_KEY.trim()
-        if (buildKey.isNotEmpty() && !buildKey.startsWith("PUT_YOUR")) return buildKey
-        return ""
+    fun resetCustomSettings(context: Context? = appContext) {
+        val ctx = context?.applicationContext ?: appContext ?: return
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_PROXY_URL)
+            .putBoolean(KEY_AI_ENABLED, true)
+            .commit()
     }
-
-    val API_KEY: String get() = resolveApiKey()
-    const val MODEL = "gemini-2.5-flash"
-    val FALLBACK_MODELS = listOf(
-        "gemini-2.5-flash",
-        "gemini-3.8-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-3.5-flash-lite",
-    )
 }
 
 class GeminiTextResponse(val text: String?)
 
-/** Direct Gemini REST / Proxy client with automatic model fallback and retry on 503/429. */
+data class ProxyConnectionTestResult(
+    val success: Boolean,
+    val testedUrl: String,
+    val latencyMs: Long,
+    val message: String,
+)
+
+/** OkHttp REST client routing all requests through {proxyUrl}/v1beta/models/{model}:generateContent or :streamGenerateContent?alt=sse. */
 object GeminiRest {
-    private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+    private const val MAX_RETRYABLE_RETRIES = 2 // 1 initial attempt + 2 retries on 429 / 5xx / transient IO
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
-    private val RETRYABLE_CODES = setOf(404, 408, 429, 500, 502, 503, 504)
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private class RetryableGeminiException(message: String) : IllegalStateException(message)
+    private class RetryableProxyException(message: String) : IllegalStateException(message)
 
-    private fun resolveTarget(model: String, stream: Boolean): Pair<String, String?> {
+    internal fun buildEndpointUrl(
+        proxyBaseUrl: String,
+        model: String,
+        stream: Boolean,
+    ): String {
+        val cleanBase = proxyBaseUrl.trim().removeSuffix("/v1beta").trimEnd('/')
+        val action = if (stream) "streamGenerateContent?alt=sse" else "generateContent"
+        return "$cleanBase/v1beta/models/$model:$action"
+    }
+
+    private fun resolveTargetUrl(model: String, stream: Boolean, proxyOverride: String? = null): String {
         if (!GeminiConfig.isAiEnabled()) {
             throw IllegalStateException("تم إيقاف خدمة الذكاء الاصطناعي مؤقتاً من قِبل مشرف التطبيق.")
         }
-        val action = if (stream) "streamGenerateContent?alt=sse" else "generateContent"
-        val proxy = GeminiConfig.getProxyUrl().trim()
-        if (proxy.isNotEmpty()) {
-            val cleanProxy = proxy.trimEnd('/')
-            val url = if (cleanProxy.contains("/v1beta/")) {
-                "$cleanProxy/models/$model:$action"
-            } else {
-                "$cleanProxy/v1beta/models/$model:$action"
-            }
-            return url to null
+        val baseProxy = if (proxyOverride != null) {
+            val validated = GeminiConfig.validateProxyUrl(proxyOverride).getOrElse { throw it }
+            validated.ifBlank { GeminiConfig.DEFAULT_PROXY_URL }
+        } else {
+            GeminiConfig.resolveProxyUrl()
         }
-        val k = GeminiConfig.resolveApiKey().trim()
-        if (k.isEmpty()) {
-            throw IllegalStateException(
-                "خدمة الذكاء الاصطناعي غير مهيّأة بعد. يرجى من مشرف التطبيق الدخول إلى «الإعدادات» ← «لوحة تحكم المشرف» لإضافة المفتاح أو الخادم الوسيط."
-            )
-        }
-        return (BASE + model + ":" + action) to k
+        return buildEndpointUrl(baseProxy, model, stream)
     }
 
     private fun buildBody(prompt: String, jsonMode: Boolean): String {
@@ -209,18 +246,21 @@ object GeminiRest {
         return sb.toString()
     }
 
-    private fun errorMessage(code: Int, raw: String): String {
-        val msg = try {
-            JSONObject(raw).optJSONObject("error")?.optString("message")
-        } catch (e: Exception) {
-            null
+    private fun isRetryableHttpCode(code: Int): Boolean = code == 429 || code in 500..599
+
+    private fun arabicErrorMessage(code: Int, raw: String): String {
+        val serverMsg = runCatching {
+            JSONObject(raw).optJSONObject("error")?.optString("message").orEmpty()
+        }.getOrDefault("")
+        val detail = serverMsg.takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
+        return when {
+            code == 429 -> "تم تجاوز حد الطلبات مؤقتاً (خطأ 429). انتظر قليلاً ثم اضغط إعادة المحاولة."
+            code in 500..599 -> "خادم الذكاء الاصطناعي مشغول أو غير متاح حالياً (خطأ $code). يرجى إعادة المحاولة."
+            code == 401 || code == 403 -> "رفض الخادم الوسيط الطلب (خطأ $code). تحقق من إعدادات الخادم والمفتاح على Worker."
+            code == 404 -> "المسار أو النموذج غير موجود على الخادم الوسيط (خطأ 404). تحقق من رابط Proxy URL."
+            code == 400 -> "تعذر تنفيذ الطلب بسبب صيغة غير صالحة (خطأ 400)$detail"
+            else -> "فشل الاتصال بخادم الذكاء الاصطناعي (خطأ $code)$detail"
         }
-        if (code in setOf(400, 401, 403) &&
-            (msg?.contains("API key", ignoreCase = true) == true || raw.contains("API_KEY_INVALID", ignoreCase = true))
-        ) {
-            return "مفتاح Gemini غير صالح ($code). يمكن للمشرف تحديث المفتاح من «الإعدادات» ← «لوحة تحكم المشرف»."
-        }
-        return "Gemini error $code: ${if (msg.isNullOrBlank()) raw.take(300) else msg}"
     }
 
     private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { cont ->
@@ -241,80 +281,135 @@ object GeminiRest {
         })
     }
 
-    suspend fun generate(prompt: String, jsonMode: Boolean = false): GeminiTextResponse {
-        val bodyJson = buildBody(prompt, jsonMode)
-        val attempts = GeminiConfig.FALLBACK_MODELS + listOf(GeminiConfig.MODEL)
-        var lastError: Throwable? = null
+    suspend fun testConnection(proxyUrlInput: String): ProxyConnectionTestResult {
+        val validated = GeminiConfig.validateProxyUrl(proxyUrlInput)
+        val cleanOverride = validated.getOrElse { err ->
+            return ProxyConnectionTestResult(
+                success = false,
+                testedUrl = proxyUrlInput.trim(),
+                latencyMs = 0L,
+                message = err.localizedMessage ?: "رابط الخادم الوسيط غير صالح.",
+            )
+        }
+        val effectiveProxy = cleanOverride.ifBlank { GeminiConfig.DEFAULT_PROXY_URL }
+        val endpoint = buildEndpointUrl(effectiveProxy, GeminiConfig.MODEL, stream = false)
+        val startMs = System.currentTimeMillis()
+        return try {
+            val response = generate(
+                prompt = "أجب بكلمة واحدة فقط: متصل",
+                jsonMode = false,
+                proxyOverride = effectiveProxy,
+                bypassAiEnabledGate = true,
+            )
+            val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+            val preview = response.text?.trim().orEmpty().take(60).ifBlank { "OK" }
+            ProxyConnectionTestResult(
+                success = true,
+                testedUrl = endpoint,
+                latencyMs = elapsed,
+                message = "الاتصال ناجح ✓ ($elapsed مللي ثانية) — الرد: $preview",
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+            ProxyConnectionTestResult(
+                success = false,
+                testedUrl = endpoint,
+                latencyMs = elapsed,
+                message = e.localizedMessage ?: "فشل اختبار الاتصال بالخادم الوسيط.",
+            )
+        }
+    }
 
-        for ((index, model) in attempts.withIndex()) {
+    suspend fun generate(
+        prompt: String,
+        jsonMode: Boolean = false,
+        proxyOverride: String? = null,
+        bypassAiEnabledGate: Boolean = false,
+    ): GeminiTextResponse {
+        val bodyJson = buildBody(prompt, jsonMode)
+        val url = if (bypassAiEnabledGate) {
+            val clean = (proxyOverride ?: GeminiConfig.resolveProxyUrl()).ifBlank { GeminiConfig.DEFAULT_PROXY_URL }
+            buildEndpointUrl(clean, GeminiConfig.MODEL, stream = false)
+        } else {
+            resolveTargetUrl(GeminiConfig.MODEL, stream = false, proxyOverride = proxyOverride)
+        }
+
+        var lastError: Throwable? = null
+        val totalAttempts = 1 + MAX_RETRYABLE_RETRIES
+        for (attempt in 0 until totalAttempts) {
             try {
-                val (url, key) = resolveTarget(model, stream = false)
-                val reqBuilder = Request.Builder()
+                val request = Request.Builder()
                     .url(url)
                     .post(bodyJson.toRequestBody(JSON_TYPE))
-                if (!key.isNullOrBlank()) reqBuilder.header("x-goog-api-key", key)
-                val resp = client.newCall(reqBuilder.build()).awaitResponse()
+                    .build()
+                val resp = client.newCall(request).awaitResponse()
                 return withContext(Dispatchers.IO) {
                     resp.use {
                         val raw = it.body?.string().orEmpty()
                         if (!it.isSuccessful) {
-                            val msg = errorMessage(it.code, raw)
-                            if (it.code in RETRYABLE_CODES) {
-                                throw RetryableGeminiException(msg)
+                            val msg = arabicErrorMessage(it.code, raw)
+                            if (isRetryableHttpCode(it.code)) {
+                                throw RetryableProxyException(msg)
                             }
                             throw IllegalStateException(msg)
                         }
                         GeminiTextResponse(extractText(JSONObject(raw)))
                     }
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 throw e
-            } catch (e: RetryableGeminiException) {
+            } catch (e: RetryableProxyException) {
                 lastError = e
-                if (index < attempts.lastIndex) {
-                    kotlinx.coroutines.delay(if (index >= GeminiConfig.FALLBACK_MODELS.size - 1) 1200L else 400L)
+                if (attempt < MAX_RETRYABLE_RETRIES) {
+                    delay(800L * (attempt + 1))
                 }
             } catch (e: IOException) {
-                lastError = e
-                if (index < attempts.lastIndex) {
-                    kotlinx.coroutines.delay(600L)
+                lastError = IllegalStateException(
+                    "تعذر الاتصال بخادم الذكاء الاصطناعي. تحقق من الإنترنت أو رابط الخادم ثم أعد المحاولة.",
+                    e,
+                )
+                if (attempt < MAX_RETRYABLE_RETRIES) {
+                    delay(800L * (attempt + 1))
                 }
             }
         }
 
         throw IllegalStateException(
-            lastError?.message ?: "Gemini servers are temporarily busy. Please try again in a moment.",
+            lastError?.message ?: "خادم الذكاء الاصطناعي غير متاح مؤقتاً. يرجى إعادة المحاولة.",
             lastError,
         )
     }
 
-    fun stream(prompt: String): Flow<String> = flow {
+    fun stream(prompt: String, proxyOverride: String? = null): Flow<String> = flow {
         val bodyJson = buildBody(prompt, false)
-        val attempts = GeminiConfig.FALLBACK_MODELS + listOf(GeminiConfig.MODEL)
-        var lastError: Throwable? = null
+        val url = resolveTargetUrl(GeminiConfig.MODEL, stream = true, proxyOverride = proxyOverride)
 
-        for ((index, model) in attempts.withIndex()) {
+        var lastError: Throwable? = null
+        val totalAttempts = 1 + MAX_RETRYABLE_RETRIES
+        for (attempt in 0 until totalAttempts) {
             var emittedAny = false
             try {
-                val (url, key) = resolveTarget(model, stream = true)
-                val reqBuilder = Request.Builder()
+                val request = Request.Builder()
                     .url(url)
                     .post(bodyJson.toRequestBody(JSON_TYPE))
-                if (!key.isNullOrBlank()) reqBuilder.header("x-goog-api-key", key)
-                val call = client.newCall(reqBuilder.build())
+                    .build()
+                val call = client.newCall(request)
                 val jobHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
                 try {
                     val resp = call.awaitResponse()
                     resp.use {
                         if (!it.isSuccessful) {
                             val raw = it.body?.string().orEmpty()
-                            val msg = errorMessage(it.code, raw)
-                            if (it.code in RETRYABLE_CODES) {
-                                throw RetryableGeminiException(msg)
+                            val msg = arabicErrorMessage(it.code, raw)
+                            if (isRetryableHttpCode(it.code)) {
+                                throw RetryableProxyException(msg)
                             }
                             throw IllegalStateException(msg)
                         }
-                        val source = it.body?.source() ?: throw RetryableGeminiException("Empty response from Gemini.")
+                        val source = it.body?.source()
+                            ?: throw RetryableProxyException("استجابة فارغة من خادم الذكاء الاصطناعي. يرجى إعادة المحاولة.")
                         while (true) {
                             val line = source.readUtf8Line() ?: break
                             if (!line.startsWith("data:")) continue
@@ -324,9 +419,9 @@ object GeminiRest {
                             if (obj.has("error")) {
                                 val errObj = obj.optJSONObject("error")
                                 val errCode = errObj?.optInt("code", 503) ?: 503
-                                val errMsg = errorMessage(errCode, data)
-                                if (!emittedAny && errCode in RETRYABLE_CODES) {
-                                    throw RetryableGeminiException(errMsg)
+                                val errMsg = arabicErrorMessage(errCode, data)
+                                if (!emittedAny && isRetryableHttpCode(errCode)) {
+                                    throw RetryableProxyException(errMsg)
                                 }
                                 throw IllegalStateException(errMsg)
                             }
@@ -338,31 +433,36 @@ object GeminiRest {
                         }
                     }
                     if (!emittedAny) {
-                        throw RetryableGeminiException("Empty stream from Gemini.")
+                        throw RetryableProxyException("لم يصل محتوى من خادم الذكاء الاصطناعي. يرجى إعادة المحاولة.")
                     }
                     return@flow
                 } finally {
                     jobHandle?.dispose()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 throw e
-            } catch (e: RetryableGeminiException) {
+            } catch (e: RetryableProxyException) {
                 if (emittedAny) throw e
                 lastError = e
-                if (index < attempts.lastIndex) {
-                    kotlinx.coroutines.delay(if (index >= GeminiConfig.FALLBACK_MODELS.size - 1) 1200L else 400L)
+                if (attempt < MAX_RETRYABLE_RETRIES) {
+                    delay(800L * (attempt + 1))
                 }
             } catch (e: IOException) {
-                if (emittedAny) throw e
-                lastError = e
-                if (index < attempts.lastIndex) {
-                    kotlinx.coroutines.delay(600L)
+                if (emittedAny) {
+                    throw IllegalStateException("انقطع الاتصال أثناء البث. يرجى إعادة المحاولة.", e)
+                }
+                lastError = IllegalStateException(
+                    "تعذر الاتصال بخادم الذكاء الاصطناعي. تحقق من الإنترنت أو رابط الخادم ثم أعد المحاولة.",
+                    e,
+                )
+                if (attempt < MAX_RETRYABLE_RETRIES) {
+                    delay(800L * (attempt + 1))
                 }
             }
         }
 
         throw IllegalStateException(
-            lastError?.message ?: "Gemini servers are temporarily busy. Please try again in a moment.",
+            lastError?.message ?: "خادم الذكاء الاصطناعي غير متاح مؤقتاً. يرجى إعادة المحاولة.",
             lastError,
         )
     }.flowOn(Dispatchers.IO)

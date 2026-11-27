@@ -114,7 +114,6 @@ class AdminConfigRepository(
                 GeminiConfig.applyAdminCloudSettings(
                     aiEnabled = settings.aiEnabled,
                     proxyUrl = settings.proxyUrl,
-                    geminiApiKey = settings.geminiApiKey,
                     passwordSalt = settings.passwordSalt,
                     passwordHash = settings.passwordHash,
                     context = appContext,
@@ -133,18 +132,18 @@ class AdminConfigRepository(
         appContext: Context,
         aiEnabled: Boolean,
         proxyUrl: String,
-        geminiApiKey: String,
         passwordSalt: String,
         passwordHash: String,
         defaultModel: String = GeminiConfig.MODEL,
     ): Result<Unit> {
         val adminPath = "admin_settings/gemini"
         val publicPath = "public_ai_config/runtime"
+        val cleanProxy = GeminiConfig.validateProxyUrl(proxyUrl)
+            .getOrElse { return Result.failure(it) }
+            .take(500)
         return try {
             val uid = requireUserId()
             val user = auth.currentUser!!
-            val cleanProxy = proxyUrl.trim().take(500)
-            val cleanKey = geminiApiKey.trim().take(300)
             val cleanModel = defaultModel.trim().ifBlank { GeminiConfig.MODEL }.take(80)
             val cleanSalt = passwordSalt.trim().take(128)
             val cleanHash = passwordHash.trim().take(128)
@@ -157,7 +156,7 @@ class AdminConfigRepository(
                     "ownerEmail" to (user.email ?: GoogleAuthHelper.BOOTSTRAPPED_ADMIN_EMAIL).take(200),
                     "aiEnabled" to aiEnabled,
                     "proxyUrl" to cleanProxy,
-                    "geminiApiKey" to cleanKey,
+                    "geminiApiKey" to "",
                     "defaultModel" to cleanModel,
                     "passwordSalt" to cleanSalt,
                     "passwordHash" to cleanHash,
@@ -169,7 +168,7 @@ class AdminConfigRepository(
                 val updatePayload = mapOf(
                     "aiEnabled" to aiEnabled,
                     "proxyUrl" to cleanProxy,
-                    "geminiApiKey" to cleanKey,
+                    "geminiApiKey" to "",
                     "defaultModel" to cleanModel,
                     "passwordSalt" to cleanSalt,
                     "passwordHash" to cleanHash,
@@ -204,7 +203,6 @@ class AdminConfigRepository(
             GeminiConfig.applyAdminCloudSettings(
                 aiEnabled = aiEnabled,
                 proxyUrl = cleanProxy,
-                geminiApiKey = cleanKey,
                 passwordSalt = cleanSalt,
                 passwordHash = cleanHash,
                 context = appContext,

@@ -1,14 +1,11 @@
 package com.example.ui.components
 
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,21 +19,17 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.ContentPaste
-import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
-import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.VerifiedUser
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -60,18 +53,17 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.AdminConfigRepository
 import com.example.ai.GeminiConfig
+import com.example.ai.GeminiRest
 import com.example.ai.GoogleAuthHelper
+import com.example.ai.ProxyConnectionTestResult
 import com.example.ui.theme.LocalWebForgeColors
 import com.example.ui.theme.MonoFontFamily
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 import kotlinx.coroutines.launch
 
 private const val CLOUDFLARE_WORKER_SAMPLE = """export default {
@@ -119,12 +111,13 @@ fun AdminControlPanelDialog(
     var savedHash by remember { mutableStateOf(GeminiConfig.getLocalAdminPasswordHash(context)) }
 
     var aiEnabled by remember { mutableStateOf(GeminiConfig.isAiEnabled(context)) }
-    var proxyUrlInput by remember { mutableStateOf(GeminiConfig.getProxyUrl(context)) }
-    var apiKeyInput by remember { mutableStateOf(GeminiConfig.getSavedUserKey(context)) }
+    var proxyUrlInput by remember { mutableStateOf(GeminiConfig.getCustomProxyUrl(context)) }
+    var proxyUrlError by remember { mutableStateOf<String?>(null) }
     var newPasswordInput by remember { mutableStateOf("") }
-    var showApiKey by remember { mutableStateOf(false) }
     var showWorkerCode by remember { mutableStateOf(false) }
     var savingCloud by remember { mutableStateOf(false) }
+    var testingConnection by remember { mutableStateOf(false) }
+    var connectionTestResult by remember { mutableStateOf<ProxyConnectionTestResult?>(null) }
     var panelStatus by remember { mutableStateOf<String?>(null) }
 
     val currentUid = authUser?.uid.orEmpty()
@@ -133,6 +126,8 @@ fun AdminControlPanelDialog(
         passwordInput = ""
         confirmPasswordInput = ""
         passwordError = null
+        proxyUrlError = null
+        connectionTestResult = null
         panelStatus = null
         val user = authUser
         if (user == null || user.uid.isBlank()) {
@@ -149,7 +144,6 @@ fun AdminControlPanelDialog(
                 if (remote != null) {
                     aiEnabled = remote.aiEnabled
                     proxyUrlInput = remote.proxyUrl
-                    apiKeyInput = remote.geminiApiKey
                     savedSalt = remote.passwordSalt
                     savedHash = remote.passwordHash
                 }
@@ -198,7 +192,7 @@ fun AdminControlPanelDialog(
                                     )
                                 }
                                 Text(
-                                    text = "سجّل الدخول بحساب Google المصرّح له للوصول إلى إعدادات الذكاء الاصطناعي والمفتاح المخفي عن المستخدمين.",
+                                    text = "سجّل الدخول بحساب Google المصرّح له لإدارة الخادم الوسيط وتفعيل الذكاء الاصطناعي لجميع المستخدمين.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -365,6 +359,8 @@ fun AdminControlPanelDialog(
                                             } else if (passwordInput != confirmPasswordInput) {
                                                 passwordError = "كلمتا السر غير متطابقتين."
                                             } else {
+                                                val safeProxy = GeminiConfig.validateProxyUrl(proxyUrlInput)
+                                                    .getOrDefault("")
                                                 val newSalt = GoogleAuthHelper.generateSaltHex()
                                                 val newHash = GoogleAuthHelper.hashAdminPassword(passwordInput, newSalt)
                                                 savingCloud = true
@@ -372,8 +368,7 @@ fun AdminControlPanelDialog(
                                                     val res = adminRepo.saveAdminSettings(
                                                         appContext = context.applicationContext,
                                                         aiEnabled = aiEnabled,
-                                                        proxyUrl = proxyUrlInput,
-                                                        geminiApiKey = apiKeyInput,
+                                                        proxyUrl = safeProxy,
                                                         passwordSalt = newSalt,
                                                         passwordHash = newHash,
                                                     )
@@ -450,7 +445,7 @@ fun AdminControlPanelDialog(
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text("تفعيل الذكاء الاصطناعي للتطبيق", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                 Text(
-                                    text = "تشغيل أو إيقاف ميزة Gemini لجميع المستخدمين",
+                                    text = "تشغيل أو إيقاف خدمة الذكاء الاصطناعي لجميع المستخدمين",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -465,71 +460,106 @@ fun AdminControlPanelDialog(
 
                         HorizontalDivider(color = ext.cardBorder)
 
-                        // Secret Admin Gemini Key
+                        // Proxy URL Configuration (DEFAULT_PROXY_URL used automatically when blank)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Key, null, tint = ext.accent, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Rounded.Link, null, tint = ext.accent, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("مفتاح Gemini الخاص بالمشرف (مخفي عن المستخدمين)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("رابط الخادم الوسيط (Proxy URL)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         }
-                        OutlinedTextField(
-                            value = apiKeyInput,
-                            onValueChange = { apiKeyInput = it },
-                            label = { Text("مفتاح Gemini") },
-                            placeholder = { Text("AIza...") },
-                            singleLine = true,
-                            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { showApiKey = !showApiKey }) {
-                                    Icon(
-                                        imageVector = if (showApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                                        contentDescription = if (showApiKey) "إخفاء المفتاح" else "إظهار المفتاح",
-                                    )
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("admin_gemini_key_input"),
-                        )
-                        OutlinedGlowButton(
-                            text = "لصق المفتاح من الحافظة",
-                            icon = Icons.Rounded.ContentPaste,
-                            onClick = {
-                                val clipText = readClipboardText(context, clipboard)
-                                if (clipText.isNotEmpty()) {
-                                    apiKeyInput = clipText
-                                    onNotifyMessage("تم لصق المفتاح")
-                                } else {
-                                    onNotifyMessage("الحافظة فارغة")
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            testTag = "admin_paste_key_button",
-                        )
-
-                        HorizontalDivider(color = ext.cardBorder)
-
-                        // Proxy URL for 100% hidden key across ALL users
                         Text(
-                            text = "رابط الخادم الوسيط Proxy URL (الأكثر أماناً للجميع)",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "عند وضع رابط Cloudflare Worker أو خادم وسيط، يستخدم جميع المستخدمين الذكاء الاصطناعي دون وصول المفتاح لهواتفهم أبداً.",
+                            text = "الخادم الافتراضي يعمل تلقائياً للجميع بدون تسجيل دخول أو مفتاح على الجهاز: ${GeminiConfig.DEFAULT_PROXY_URL}. يمكنك إدخال رابط مخصص يبدأ بـ https:// لتجاوزه.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         OutlinedTextField(
                             value = proxyUrlInput,
-                            onValueChange = { proxyUrlInput = it },
-                            label = { Text("Proxy URL (اختياري)") },
-                            placeholder = { Text("https://my-gemini-proxy.workers.dev") },
+                            onValueChange = {
+                                proxyUrlInput = it
+                                proxyUrlError = null
+                            },
+                            label = { Text("رابط مخصص (اختياري — يتقدّم على الافتراضي)") },
+                            placeholder = { Text(GeminiConfig.DEFAULT_PROXY_URL) },
+                            isError = !proxyUrlError.isNullOrBlank(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth().testTag("admin_proxy_url_input"),
                         )
+                        if (!proxyUrlError.isNullOrBlank()) {
+                            Text(
+                                text = proxyUrlError.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("admin_proxy_url_error"),
+                            )
+                        }
+
+                        // Test Connection Button + Result
+                        OutlinedGlowButton(
+                            text = if (testingConnection) "جارٍ اختبار الاتصال..." else "اختبار الاتصال",
+                            icon = Icons.Rounded.NetworkCheck,
+                            onClick = {
+                                if (testingConnection) return@OutlinedGlowButton
+                                val validation = GeminiConfig.validateProxyUrl(proxyUrlInput)
+                                if (validation.isFailure) {
+                                    val msg = validation.exceptionOrNull()?.localizedMessage
+                                        ?: "رابط الخادم الوسيط غير صالح."
+                                    proxyUrlError = msg
+                                    connectionTestResult = ProxyConnectionTestResult(
+                                        success = false,
+                                        testedUrl = proxyUrlInput.trim(),
+                                        latencyMs = 0L,
+                                        message = msg,
+                                    )
+                                    return@OutlinedGlowButton
+                                }
+                                proxyUrlError = null
+                                testingConnection = true
+                                connectionTestResult = null
+                                scope.launch {
+                                    val result = GeminiRest.testConnection(proxyUrlInput)
+                                    testingConnection = false
+                                    connectionTestResult = result
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            testTag = "admin_test_connection_button",
+                        )
+
+                        connectionTestResult?.let { testRes ->
+                            Surface(
+                                color = if (testRes.success) {
+                                    ext.success.copy(alpha = 0.12f)
+                                } else {
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                                },
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (testRes.success) ext.success.copy(alpha = 0.5f) else MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("admin_test_connection_result"),
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = testRes.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (testRes.success) ext.success else MaterialTheme.colorScheme.error,
+                                    )
+                                    if (testRes.testedUrl.isNotBlank()) {
+                                        Text(
+                                            text = testRes.testedUrl,
+                                            style = TextStyle(fontFamily = MonoFontFamily, fontSize = 10.sp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         TextButton(onClick = { showWorkerCode = !showWorkerCode }) {
                             Text(
-                                text = if (showWorkerCode) "إخفاء كود Cloudflare Worker" else "عرض ونسخ كود Cloudflare Worker المجاني",
+                                text = if (showWorkerCode) "إخفاء كود Cloudflare Worker" else "عرض ونسخ كود Cloudflare Worker",
                                 color = ext.accent,
                             )
                         }
@@ -579,10 +609,20 @@ fun AdminControlPanelDialog(
                         }
 
                         GradientButton(
-                            text = if (savingCloud) "جارٍ الحفظ في السحابة..." else "حفظ ومزامنة إعدادات المشرف",
+                            text = if (savingCloud) "جارٍ الحفظ والمزامنة..." else "حفظ ومزامنة إعدادات المشرف",
                             icon = Icons.Rounded.CloudDone,
                             enabled = !savingCloud,
                             onClick = {
+                                val validation = GeminiConfig.validateProxyUrl(proxyUrlInput)
+                                val validatedProxy = validation.getOrElse { err ->
+                                    val msg = err.localizedMessage ?: "رابط الخادم الوسيط غير صالح."
+                                    proxyUrlError = msg
+                                    panelStatus = msg
+                                    return@GradientButton
+                                }
+                                proxyUrlError = null
+                                proxyUrlInput = validatedProxy
+
                                 val nextPw = newPasswordInput.trim()
                                 if (nextPw.isNotEmpty() && nextPw.length < 6) {
                                     panelStatus = "كلمة السر الجديدة يجب أن تكون 6 أحرف على الأقل."
@@ -597,8 +637,7 @@ fun AdminControlPanelDialog(
                                     val result = adminRepo.saveAdminSettings(
                                         appContext = context.applicationContext,
                                         aiEnabled = aiEnabled,
-                                        proxyUrl = proxyUrlInput,
-                                        geminiApiKey = apiKeyInput,
+                                        proxyUrl = validatedProxy,
                                         passwordSalt = finalSalt,
                                         passwordHash = finalHash,
                                     )
@@ -608,9 +647,17 @@ fun AdminControlPanelDialog(
                                     newPasswordInput = ""
                                     if (result.isSuccess) {
                                         panelStatus = "تم حفظ الإعدادات وتطبيقها بنجاح ✓"
-                                        onNotifyMessage("تم حفظ إعدادات لوحة التحكم في السحابة ✓")
+                                        onNotifyMessage("تم حفظ إعدادات لوحة التحكم ✓")
                                     } else {
-                                        panelStatus = "تم الحفظ محلياً؛ تحقق من الاتصال للسحابة: ${result.exceptionOrNull()?.localizedMessage.orEmpty()}"
+                                        // Still save locally if cloud write failed temporarily (e.g. offline), since URL was validated
+                                        GeminiConfig.applyAdminCloudSettings(
+                                            aiEnabled = aiEnabled,
+                                            proxyUrl = validatedProxy,
+                                            passwordSalt = finalSalt,
+                                            passwordHash = finalHash,
+                                            context = context.applicationContext,
+                                        )
+                                        panelStatus = "تم الحفظ محلياً؛ تعذر التحديث السحابي: ${result.exceptionOrNull()?.localizedMessage.orEmpty()}"
                                     }
                                 }
                             },
@@ -629,19 +676,4 @@ fun AdminControlPanelDialog(
             }
         },
     )
-}
-
-private fun readClipboardText(
-    context: Context,
-    clipboard: androidx.compose.ui.platform.ClipboardManager,
-): String {
-    return runCatching {
-        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        val clip = cm?.primaryClip
-        if (clip != null && clip.itemCount > 0) {
-            clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
-        } else {
-            ""
-        }
-    }.getOrDefault("").ifBlank { clipboard.getText()?.text.orEmpty() }.trim()
 }

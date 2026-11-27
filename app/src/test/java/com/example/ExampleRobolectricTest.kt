@@ -40,21 +40,46 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `geminiConfig prioritizes user SharedPreferences key over buildConfig fallback`() {
+    fun `geminiConfig uses DEFAULT_PROXY_URL automatically and enforces https admin override`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         GeminiConfig.init(context)
-        GeminiConfig.saveUserKey("", context)
-        assertEquals("", GeminiConfig.getSavedUserKey(context))
+        GeminiConfig.resetCustomSettings(context)
 
-        GeminiConfig.saveUserKey("  AIzaTestUserKey123  ", context)
-        assertEquals("AIzaTestUserKey123", GeminiConfig.getSavedUserKey(context))
-        assertEquals("AIzaTestUserKey123", GeminiConfig.resolveApiKey(context))
+        assertEquals(
+            "https://late-feather-3c04webforge-ai.alrwysm239.workers.dev",
+            GeminiConfig.DEFAULT_PROXY_URL,
+        )
+        assertEquals(GeminiConfig.DEFAULT_PROXY_URL, GeminiConfig.resolveProxyUrl(context))
 
-        GeminiConfig.saveUserKey("", context)
-        val expectedFallback = BuildConfig.GEMINI_API_KEY.trim().let {
-            if (it.isNotEmpty() && !it.startsWith("PUT_YOUR")) it else ""
-        }
-        assertEquals(expectedFallback, GeminiConfig.resolveApiKey(context))
+        val invalidHttp = GeminiConfig.validateProxyUrl("http://example.workers.dev")
+        assertTrue(invalidHttp.isFailure)
+
+        val invalidPlainText = GeminiConfig.validateProxyUrl("not a url")
+        assertTrue(invalidPlainText.isFailure)
+
+        val savedCustom = GeminiConfig.saveCustomProxyUrl("  https://custom-proxy.example.workers.dev/  ", context)
+        assertTrue(savedCustom.isSuccess)
+        assertEquals("https://custom-proxy.example.workers.dev", GeminiConfig.resolveProxyUrl(context))
+
+        assertEquals(
+            "https://custom-proxy.example.workers.dev/v1beta/models/gemini-2.5-flash:generateContent",
+            com.example.ai.GeminiRest.buildEndpointUrl(
+                GeminiConfig.resolveProxyUrl(context),
+                GeminiConfig.MODEL,
+                stream = false,
+            ),
+        )
+        assertEquals(
+            "https://custom-proxy.example.workers.dev/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            com.example.ai.GeminiRest.buildEndpointUrl(
+                GeminiConfig.resolveProxyUrl(context),
+                GeminiConfig.MODEL,
+                stream = true,
+            ),
+        )
+
+        GeminiConfig.saveCustomProxyUrl("", context)
+        assertEquals(GeminiConfig.DEFAULT_PROXY_URL, GeminiConfig.resolveProxyUrl(context))
     }
 
     @Test

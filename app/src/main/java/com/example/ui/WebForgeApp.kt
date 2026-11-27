@@ -596,6 +596,7 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                         pendingAutoApkBuilder = true
                         navigateToTab(ROUTE_EXPORT)
                     },
+                    onRetryLastAction = viewModel::retryLastAiAction,
                     onDiscardTask = viewModel::discardAiTask,
                     onDismiss = { showAiStudioSheet = false },
                 )
