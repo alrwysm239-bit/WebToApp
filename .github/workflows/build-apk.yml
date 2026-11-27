@@ -1,24 +1,86 @@
-      - name: Sign APK
+name: Build WebForge APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+env:
+  KS_PASS: webforge123456
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+
+      - name: Create debug keystore
         run: |
-          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          PASS=webforge123
+          keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
+            -storepass android -keypass android -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Create or reuse release keystore
+        run: |
           if [ ! -f keystore/ks.jks ]; then
             mkdir -p keystore
-            keytool -genkeypair -keystore keystore/ks.jks -alias webforge \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass $PASS -keypass $PASS \
-              -dname "CN=WebForge, O=WebForge, C=SA"
+            keytool -genkeypair -keystore keystore/ks.jks -alias upload \
+              -storepass "$KS_PASS" -keypass "$KS_PASS" -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=WebForge,O=WebForge,C=SA"
             git config user.name "github-actions"
             git config user.email "actions@github.com"
             git add keystore/ks.jks
             git commit -m "add signing keystore"
-            git push
+            git push origin HEAD:${{ github.ref_name }}
           fi
-          UNSIGNED=$(find android/app/build/outputs/apk/release -name "*-unsigned.apk" 2>/dev/null | head -1)
-          if [ -n "$UNSIGNED" ]; then
-            $BT/zipalign -p -f 4 "$UNSIGNED" aligned.apk
-            $BT/apksigner sign --ks keystore/ks.jks --ks-pass pass:$PASS \
-              --ks-key-alias webforge --out WebForge.apk aligned.apk
-          else
-            cp "$(find android/app/build/outputs/apk -name '*.apk' | head -1)" WebForge.apk
-          fi
+
+      - name: Set version
+        run: |
+          sed -i -E 's/versionCode = [0-9]+/versionCode = ${{ github.run_number }}/' app/build.gradle.kts
+          sed -i -E 's/versionName = "[^"]*"/versionName = "1.0.${{ github.run_number }}"/' app/build.gradle.kts
+
+      - name: Build release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/keystore/ks.jks
+          STORE_PASSWORD: ${{ env.KS_PASS }}
+          KEY_PASSWORD: ${{ env.KS_PASS }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk WebForge.apk
+
+      - name: Upload APK file
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebForge-APK
+          path: WebForge.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: WebForge v1.0.${{ github.run_number }}
+          files: WebForge.apk
