@@ -332,11 +332,12 @@ fun EditorScreen(
                         shape = RoundedCornerShape(18.dp),
                     ) {
                         Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp))) {
+                            val splitHtml = state.effectiveEntryHtml
                             LiveHtmlWebView(
-                                html = state.htmlContent,
+                                html = splitHtml,
                                 assets = state.assets,
                                 deviceFrame = DeviceFrame.PHONE,
-                                loadKey = "split-${state.previewRevision}-${state.htmlContent.hashCode()}",
+                                loadKey = "split-${state.previewRevision}-${splitHtml.hashCode()}",
                                 isOffline = state.isEffectiveOffline,
                                 onConsoleLog = onConsoleLog,
                             )

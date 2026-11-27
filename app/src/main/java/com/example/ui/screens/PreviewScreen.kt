@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.annotation.SuppressLint
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -56,6 +57,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -272,9 +274,10 @@ fun PreviewScreen(
                             }
                         }
 
+                        val entryHtml = state.effectiveEntryHtml
                         val assetsSnapshot = remember(state.assets) { state.assets }
-                        val loadKey = remember(state.htmlContent, state.assets, state.previewRevision, state.selectedDevice) {
-                            "${state.previewRevision}-${state.selectedDevice.name}-${state.htmlContent.hashCode()}"
+                        val loadKey = remember(entryHtml, state.assets, state.previewRevision, state.selectedDevice) {
+                            "${state.previewRevision}-${state.selectedDevice.name}-${entryHtml.hashCode()}"
                         }
 
                         Box(
@@ -285,7 +288,7 @@ fun PreviewScreen(
                                 .clip(RoundedCornerShape(16.dp)),
                         ) {
                             LiveHtmlWebView(
-                                html = state.htmlContent,
+                                html = entryHtml,
                                 assets = assetsSnapshot,
                                 deviceFrame = state.selectedDevice,
                                 loadKey = loadKey,
@@ -422,11 +425,12 @@ fun PreviewScreen(
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                val fsHtml = state.effectiveEntryHtml
                 LiveHtmlWebView(
-                    html = state.htmlContent,
+                    html = fsHtml,
                     assets = state.assets,
                     deviceFrame = DeviceFrame.PHONE,
-                    loadKey = "fs-${state.previewRevision}-${state.htmlContent.hashCode()}",
+                    loadKey = "fs-${state.previewRevision}-${fsHtml.hashCode()}",
                     isOffline = state.isEffectiveOffline,
                     onConsoleLog = onConsoleLog,
                 )
@@ -492,8 +496,18 @@ fun LiveHtmlWebView(
     onConsoleLog: (String, String) -> Unit,
     onWebViewReady: (WebView) -> Unit = {},
 ) {
-    val latestAssets = remember(assets) { assets.associateBy { it.path.lowercase().trimStart('/') } }
+    val latestAssetsMap by rememberUpdatedState(
+        assets.associateBy { it.path.lowercase().trimStart('/') },
+    )
+    val latestOnConsoleLog by rememberUpdatedState(onConsoleLog)
     val lastLoadedKey = remember { mutableStateOf("") }
+    val lastScale = remember { mutableStateOf(-1) }
+
+    val cleanHtml = remember(html) {
+        html.removePrefix("\uFEFF").ifBlank {
+            "<!DOCTYPE html><html><body style='margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0C0A20;color:#F4F6FF;font-family:sans-serif;text-align:center;padding:24px'><div><h3>Empty HTML</h3><p style='color:#A8AED8'>Paste or import an HTML file to preview.</p></div></body></html>"
+        }
+    }
 
     AndroidView(
         modifier = Modifier
@@ -522,7 +536,7 @@ fun LiveHtmlWebView(
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                         if (consoleMessage != null) {
-                            onConsoleLog(
+                            latestOnConsoleLog(
                                 consoleMessage.messageLevel().name,
                                 consoleMessage.message(),
                             )
@@ -530,46 +544,54 @@ fun LiveHtmlWebView(
                         return true
                     }
                 }
+                webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): WebResourceResponse? {
+                        val url = request?.url ?: return null
+                        if (url.host.equals("webforge.local", ignoreCase = true)) {
+                            val relPath = url.path?.trimStart('/')?.lowercase().orEmpty()
+                            val cors = mapOf("Access-Control-Allow-Origin" to "*")
+                            val assetsMap = latestAssetsMap
+                            val asset = assetsMap[relPath]
+                                ?: assetsMap.entries.firstOrNull { it.key.endsWith("/$relPath") }?.value
+                            if (asset != null) {
+                                val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
+                                return WebResourceResponse(
+                                    asset.mimeType,
+                                    "UTF-8",
+                                    200,
+                                    "OK",
+                                    cors,
+                                    ByteArrayInputStream(bytes),
+                                )
+                            }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                        error: WebResourceError?,
+                    ) {
+                        if (request?.isForMainFrame == true) {
+                            latestOnConsoleLog(
+                                "ERROR",
+                                error?.description?.toString() ?: "Preview load error",
+                            )
+                        }
+                    }
+                }
                 onWebViewReady(this)
             }
         },
         update = { webView ->
-            onWebViewReady(webView)
             webView.settings.cacheMode = if (isOffline) {
                 WebSettings.LOAD_CACHE_ELSE_NETWORK
             } else {
                 WebSettings.LOAD_DEFAULT
-            }
-
-            val htmlBytes = html.toByteArray(Charsets.UTF_8)
-            webView.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView?,
-                    request: WebResourceRequest?,
-                ): WebResourceResponse? {
-                    val url = request?.url ?: return null
-                    if (url.toString().startsWith(LOCAL_BASE_URL)) {
-                        val relPath = url.path?.trimStart('/')?.lowercase().orEmpty()
-                        val cors = mapOf("Access-Control-Allow-Origin" to "*")
-                        if (relPath.isEmpty() || relPath == "index.html") {
-                            return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
-                        }
-                        val asset = latestAssets[relPath]
-                            ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$relPath") }?.value
-                        if (asset != null) {
-                            val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
-                            return WebResourceResponse(
-                                asset.mimeType,
-                                "UTF-8",
-                                200,
-                                "OK",
-                                cors,
-                                ByteArrayInputStream(bytes),
-                            )
-                        }
-                    }
-                    return super.shouldInterceptRequest(view, request)
-                }
             }
 
             val targetScale = when (deviceFrame) {
@@ -577,11 +599,20 @@ fun LiveHtmlWebView(
                 DeviceFrame.TABLET -> 65
                 DeviceFrame.PC -> 42
             }
-            webView.setInitialScale(targetScale)
+            if (lastScale.value != targetScale) {
+                lastScale.value = targetScale
+                webView.setInitialScale(targetScale)
+            }
 
             if (lastLoadedKey.value != loadKey) {
                 lastLoadedKey.value = loadKey
-                webView.loadUrl("${LOCAL_BASE_URL}index.html")
+                webView.loadDataWithBaseURL(
+                    LOCAL_BASE_URL,
+                    cleanHtml,
+                    "text/html",
+                    "UTF-8",
+                    "${LOCAL_BASE_URL}index.html",
+                )
             }
         },
     )

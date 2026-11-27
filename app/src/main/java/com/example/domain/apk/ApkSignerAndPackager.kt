@@ -378,7 +378,7 @@ object ApkSignerAndPackager {
             }
         }
         val keyPair = generateRsa2048KeyPair()
-        val certDer = generateSelfSignedX509Cert(keyPair, cn)
+        val certDer = generateSelfSignedX509Cert(keyPair, "WebForge Studio")
         if (dir != null) {
             runCatching {
                 dir.mkdirs()

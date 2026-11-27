@@ -137,16 +137,15 @@ fun CodeEditorCard(
 
     val isHugeFile = code.length > HUGE_FILE_PREVIEW_THRESHOLD
     val isFastMode = code.length > SYNTAX_HIGHLIGHT_MAX_CHARS
-    var forceFullHugeEdit by remember(code.length > HUGE_FILE_PREVIEW_THRESHOLD) { mutableStateOf(false) }
 
-    val displayedCode = remember(code, isHugeFile, forceFullHugeEdit) {
-        if (isHugeFile && !forceFullHugeEdit) {
+    val displayedCode = remember(code, isHugeFile) {
+        if (isHugeFile) {
             code.take(HUGE_FILE_PREVIEW_SLICE)
         } else {
             code
         }
     }
-    val isReadOnlyPreviewSlice = isHugeFile && !forceFullHugeEdit
+    val isReadOnlyPreviewSlice = isHugeFile
 
     val autoWrapSuggested = remember(displayedCode.length) {
         displayedCode.length > SYNTAX_HIGHLIGHT_MAX_CHARS
@@ -440,7 +439,7 @@ fun CodeEditorCard(
             }
         }
 
-        AnimatedVisibility(visible = isHugeFile && !forceFullHugeEdit) {
+        AnimatedVisibility(visible = isHugeFile) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = ext.warning.copy(alpha = 0.12f),
@@ -454,17 +453,14 @@ fun CodeEditorCard(
                 ) {
                     Text(
                         text = if (isRtlUi) {
-                            "ملف ضخم (${code.length / 1024} KB) — وضع العرض السريع لمنع التعليق. المعاينة والبناء يستخدمان الكود كاملاً."
+                            "ملف ضخم (${code.length / 1024} KB) — العرض للقراءة فقط لحماية الكود ومنع التعليق. المعاينة والبناء يستخدمان الكود كاملاً."
                         } else {
-                            "Large file (${code.length / 1024} KB) — Fast Preview active for 0-lag. Preview & Builds use full code."
+                            "Large file (${code.length / 1024} KB) — Read-only preview protects HTML & prevents lag. Preview & Builds use 100% of full code."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = ext.warning,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { forceFullHugeEdit = true }) {
-                        Text(if (isRtlUi) "تحرير كامل" else "Edit Full", color = ext.accent, fontWeight = FontWeight.Bold)
-                    }
                 }
             }
         }

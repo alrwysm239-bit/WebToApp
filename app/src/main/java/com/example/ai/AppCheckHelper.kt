@@ -22,7 +22,7 @@ private const val FALLBACK_APP_ID = "1:181827572742:android:82b94c6b7d8fe22a96df
 private const val FALLBACK_SENDER_ID = "181827572742"
 private const val FALLBACK_STORAGE_BUCKET = "gen-lang-client-0836729242.firebasestorage.app"
 
-fun ensureFirebaseInitialized(context: Context): FirebaseApp? {
+private fun ensureFirebaseInitialized(context: Context): FirebaseApp? {
     val appContext = context.applicationContext ?: context
     FirebaseApp.getApps(appContext).firstOrNull()?.let { return it }
 

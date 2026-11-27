@@ -99,6 +99,28 @@ data class WebForgeUiState(
             assets.firstOrNull { it.path == selectedAssetPath }?.textContent ?: htmlContent
         }
 
+    val effectiveEntryHtml: String
+        get() {
+            val isDefaultStarter = htmlContent.isBlank() ||
+                htmlContent == HtmlToolkit.defaultStarterHtml(true) ||
+                htmlContent == HtmlToolkit.defaultStarterHtml(false)
+            if (isDefaultStarter) {
+                val htmlAsset = assets.firstOrNull {
+                    it.isText && !it.textContent.isNullOrBlank() &&
+                        (it.path.equals("index.html", ignoreCase = true) ||
+                            it.path.endsWith("/index.html", ignoreCase = true))
+                } ?: assets.filter {
+                    it.isText && !it.textContent.isNullOrBlank() &&
+                        (it.path.endsWith(".html", ignoreCase = true) ||
+                            it.path.endsWith(".htm", ignoreCase = true))
+                }.maxByOrNull { it.sizeBytes }
+                if (htmlAsset?.textContent != null) {
+                    return htmlAsset.textContent
+                }
+            }
+            return htmlContent
+        }
+
     val previewDisplayUrl: String
         get() = publishedUrl ?: if (appConfig.customDomain.isNotBlank()) {
             "https://${appConfig.customDomain.trim()}"
@@ -675,7 +697,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val st = _uiState.value
             val bytes = withContext(Dispatchers.IO) {
-                ZipArchiveManager.buildWebsiteZip(context, st.projectName, st.htmlContent, st.assets, st.appConfig, includePwa)
+                ZipArchiveManager.buildWebsiteZip(context, st.projectName, st.effectiveEntryHtml, st.assets, st.appConfig, includePwa)
             }
             val fileName = "${HtmlToolkit.slugify(st.projectName)}${if (includePwa) "-pwa" else "-website"}.zip"
             dispatchExport(fileName, "application/zip", bytes, saveViaSaf)
@@ -686,7 +708,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val st = _uiState.value
             val bundled = withContext(Dispatchers.Default) {
-                CodeLinterAndAudit.bundleSingleSelfContainedHtml(st.htmlContent, st.assets)
+                CodeLinterAndAudit.bundleSingleSelfContainedHtml(st.effectiveEntryHtml, st.assets)
             }
             val fileName = "${HtmlToolkit.slugify(st.projectName)}-standalone.html"
             dispatchExport(fileName, "text/html", bundled.toByteArray(Charsets.UTF_8), saveViaSaf)
@@ -703,7 +725,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     OnDeviceApkBuilder.buildSignedApk(
                         context = context,
                         projectName = st.projectName,
-                        html = st.htmlContent,
+                        html = st.effectiveEntryHtml,
                         assets = st.assets,
                         config = st.appConfig,
                     )
@@ -728,7 +750,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     OnDeviceApkBuilder.buildIosWebClipMobileConfig(
                         context = context,
                         projectName = st.projectName,
-                        html = st.htmlContent,
+                        html = st.effectiveEntryHtml,
                         assets = st.assets,
                         config = st.appConfig,
                         publishedUrl = st.publishedUrl,
@@ -747,7 +769,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val st = _uiState.value
             val bytes = withContext(Dispatchers.IO) {
-                ZipArchiveManager.buildAndroidWebViewProjectZip(context, st.projectName, st.htmlContent, st.assets, st.appConfig)
+                ZipArchiveManager.buildAndroidWebViewProjectZip(context, st.projectName, st.effectiveEntryHtml, st.assets, st.appConfig)
             }
             val fileName = "${HtmlToolkit.slugify(st.appConfig.appName)}-android-capacitor.zip"
             dispatchExport(fileName, "application/zip", bytes, saveViaSaf)
@@ -762,7 +784,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     OnDeviceApkBuilder.buildIosIpaArchive(
                         context = context,
                         projectName = st.projectName,
-                        html = st.htmlContent,
+                        html = st.effectiveEntryHtml,
                         assets = st.assets,
                         config = st.appConfig,
                     )
@@ -781,7 +803,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val st = _uiState.value
             val bytes = withContext(Dispatchers.IO) {
-                AssetAndStoreGenerator.buildIosCapacitorZip(context, st.projectName, st.htmlContent, st.assets, st.appConfig)
+                AssetAndStoreGenerator.buildIosCapacitorZip(context, st.projectName, st.effectiveEntryHtml, st.assets, st.appConfig)
             }
             dispatchExport("${HtmlToolkit.slugify(st.appConfig.appName)}-ios-xcode-ipa-workflow.zip", "application/zip", bytes, saveViaSaf)
         }
@@ -791,7 +813,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val st = _uiState.value
             val bytes = withContext(Dispatchers.IO) {
-                AssetAndStoreGenerator.buildElectronDesktopZip(context, st.projectName, st.htmlContent, st.assets, st.appConfig)
+                AssetAndStoreGenerator.buildElectronDesktopZip(context, st.projectName, st.effectiveEntryHtml, st.assets, st.appConfig)
             }
             dispatchExport("${HtmlToolkit.slugify(st.appConfig.appName)}-electron-desktop.zip", "application/zip", bytes, saveViaSaf)
         }
@@ -819,7 +841,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             val st = _uiState.value
             val descriptions = if (includeAiDescriptions && !st.isEffectiveOffline) {
                 runCatching {
-                    geminiAssistant.generateStoreDescriptions(st.appConfig.appName, st.htmlContent)
+                    geminiAssistant.generateStoreDescriptions(st.appConfig.appName, st.effectiveEntryHtml)
                 }.getOrNull()
             } else null
 
@@ -894,16 +916,17 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             }
             _uiState.update { it.copy(deployState = DeployState.InProgress("Preparing bundle...")) }
             runCatching {
+                val entryHtml = state.effectiveEntryHtml
                 val fileMap = withContext(Dispatchers.IO) {
                     ZipArchiveManager.buildWebsiteFileMap(
-                        context, state.projectName, state.htmlContent, state.assets, state.appConfig, includePwa = true,
+                        context, state.projectName, entryHtml, state.assets, state.appConfig, includePwa = true,
                     )
                 }
                 when (provider) {
                     HostingProvider.FREE_INSTANT -> {
                         val zipBytes = withContext(Dispatchers.IO) { ZipArchiveManager.zipFileMap(fileMap) }
                         val singleHtml = withContext(Dispatchers.Default) {
-                            val bundled = CodeLinterAndAudit.bundleSingleSelfContainedHtml(state.htmlContent, state.assets)
+                            val bundled = CodeLinterAndAudit.bundleSingleSelfContainedHtml(entryHtml, state.assets)
                             val withSeo = HtmlToolkit.injectViewportSeoAndIcon(
                                 rawHtml = bundled,
                                 title = state.appConfig.appName.ifBlank { state.projectName },

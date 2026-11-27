@@ -65,6 +65,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -77,8 +78,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -551,9 +554,15 @@ fun AppShellPreviewDialog(
     var lockWrong by remember { mutableStateOf(false) }
     var simulatedLandscape by remember { mutableStateOf(config.orientation == AppOrientation.LANDSCAPE) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    val htmlBytes = remember(html) {
-        (html.ifBlank { "<html><body><h3>Empty HTML</h3></body></html>" }).toByteArray(Charsets.UTF_8)
+    val cleanHtml = remember(html) {
+        html.removePrefix("\uFEFF").ifBlank {
+            "<!DOCTYPE html><html><body style='margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0C0A20;color:#F4F6FF;font-family:sans-serif'><h3>Empty HTML</h3></body></html>"
+        }
     }
+    val latestAssetsMap by rememberUpdatedState(
+        assets.associateBy { it.path.lowercase().trimStart('/') },
+    )
+    val lastLoadedSig = remember { mutableStateOf("") }
 
     val splashBgInt = remember(config.splashBgColorHex) {
         runCatching { android.graphics.Color.parseColor(config.splashBgColorHex) }
@@ -578,7 +587,6 @@ fun AppShellPreviewDialog(
     ) {
         Box(modifier = Modifier.fillMaxSize().background(splashBg)) {
             Column(modifier = Modifier.fillMaxSize()) {
-                val latestAssets = remember(assets) { assets.associateBy { it.path.lowercase().trimStart('/') } }
                 AndroidView(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     factory = { ctx ->
@@ -588,7 +596,6 @@ fun AppShellPreviewDialog(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                             )
                             setBackgroundColor(splashBgInt)
-                            webViewRef = this
                             settings.javaScriptEnabled = true
                             settings.javaScriptCanOpenWindowsAutomatically = true
                             settings.domStorageEnabled = true
@@ -617,11 +624,9 @@ fun AppShellPreviewDialog(
                                     if (url.host.equals("webforge.local", ignoreCase = true)) {
                                         val rel = url.path?.trimStart('/')?.lowercase().orEmpty()
                                         val cors = mapOf("Access-Control-Allow-Origin" to "*")
-                                        if (rel.isEmpty() || rel == "index.html") {
-                                            return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
-                                        }
-                                        val asset = latestAssets[rel]
-                                            ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$rel") }?.value
+                                        val assetsMap = latestAssetsMap
+                                        val asset = assetsMap[rel]
+                                            ?: assetsMap.entries.firstOrNull { it.key.endsWith("/$rel") }?.value
                                         if (asset != null) {
                                             val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
                                             return WebResourceResponse(asset.mimeType, "UTF-8", 200, "OK", cors, ByteArrayInputStream(bytes))
@@ -630,11 +635,24 @@ fun AppShellPreviewDialog(
                                     return super.shouldInterceptRequest(view, request)
                                 }
                             }
+                            webViewRef = this
+                        }
+                    },
+                    update = { webView ->
+                        val sig = "${config.sourceMode.key}:${config.sourceUrl}:${cleanHtml.hashCode()}:${assets.size}"
+                        if (lastLoadedSig.value != sig) {
+                            lastLoadedSig.value = sig
                             if (config.sourceMode == AppSourceMode.URL && config.sourceUrl.isNotBlank()) {
                                 val u = config.sourceUrl.trim()
-                                loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
+                                webView.loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
                             } else {
-                                loadUrl("https://webforge.local/index.html")
+                                webView.loadDataWithBaseURL(
+                                    "https://webforge.local/",
+                                    cleanHtml,
+                                    "text/html",
+                                    "UTF-8",
+                                    "https://webforge.local/index.html",
+                                )
                             }
                         }
                     },
@@ -790,12 +808,13 @@ fun FreeWebBuilderPortalDialog(
 
     val allPortals = remember {
         listOf(
-            BuilderPortalEntry("ANDROID", "WebIntoApp (HTML/URL -> APK & iOS)", "https://www.webintoapp.com/app-maker"),
             BuilderPortalEntry("ANDROID", "PWABuilder (Store / APK / iOS)", "https://www.pwabuilder.com/"),
+            BuilderPortalEntry("ANDROID", "WebIntoApp (HTML/ZIP -> APK & iOS)", "https://www.webintoapp.com/app-maker"),
             BuilderPortalEntry("ANDROID", "AppsGeyser (Free Android APK)", "https://appsgeyser.com/"),
             BuilderPortalEntry("IOS", "Median.co (Android & iOS IPA)", "https://median.co/"),
             BuilderPortalEntry("IOS", "AppMySite (iOS & Android Builder)", "https://www.appmysite.com/"),
             BuilderPortalEntry("HOST", "Tiiny.host (Upload HTML/ZIP Free)", "https://tiiny.host/"),
+            BuilderPortalEntry("HOST", "Static.app (Upload HTML/ZIP Free)", "https://static.app/"),
             BuilderPortalEntry("HOST", "Netlify Drop (Upload HTML/ZIP)", "https://app.netlify.com/drop"),
         )
     }
@@ -804,6 +823,7 @@ fun FreeWebBuilderPortalDialog(
     }
 
     var selectedPortalUrl by remember { mutableStateOf(allPortals.first().url) }
+    var loadProgress by remember { mutableIntStateOf(0) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var pendingFileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
@@ -928,6 +948,13 @@ fun FreeWebBuilderPortalDialog(
                     Text(strings.offlineDeployBlocked, color = ext.warning)
                 }
             } else {
+                if (loadProgress in 1..99) {
+                    LinearProgressIndicator(
+                        progress = { loadProgress / 100f },
+                        color = ext.accent,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 AndroidView(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     factory = { ctx ->
@@ -939,11 +966,14 @@ fun FreeWebBuilderPortalDialog(
                             webViewRef = this
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
                             settings.allowFileAccess = true
                             settings.allowContentAccess = true
                             settings.useWideViewPort = true
                             settings.loadWithOverviewMode = true
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            settings.userAgentString =
+                                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
                             runCatching {
                                 CookieManager.getInstance().setAcceptCookie(true)
                                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -954,6 +984,10 @@ fun FreeWebBuilderPortalDialog(
                                 }
                             })
                             webChromeClient = object : WebChromeClient() {
+                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                    loadProgress = newProgress
+                                }
+
                                 override fun onShowFileChooser(
                                     webView: WebView?,
                                     filePathCallback: ValueCallback<Array<Uri>>?,
@@ -965,7 +999,19 @@ fun FreeWebBuilderPortalDialog(
                                     return true
                                 }
                             }
-                            webViewClient = WebViewClient()
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                ): Boolean {
+                                    val u = request?.url?.toString().orEmpty()
+                                    if (!u.startsWith("http://") && !u.startsWith("https://")) {
+                                        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }
+                                        return true
+                                    }
+                                    return false
+                                }
+                            }
                             loadUrl(selectedPortalUrl)
                         }
                     },

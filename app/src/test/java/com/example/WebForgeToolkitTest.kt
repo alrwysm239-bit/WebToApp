@@ -151,4 +151,26 @@ class WebForgeToolkitTest {
             com.example.data.model.HostingProvider.fromKey("free_instant"),
         )
     }
+
+    @Test
+    fun `effectiveEntryHtml falls back to html asset when entry is starter or blank`() {
+        val assetHtml = ProjectAsset(
+            path = "index (1).html",
+            mimeType = "text/html",
+            textContent = "<!DOCTYPE html><html><title>Wahg TV</title><body>Custom App</body></html>",
+            sizeBytes = 75,
+        )
+        val stateWithStarter = com.example.ui.WebForgeUiState(
+            htmlContent = HtmlToolkit.defaultStarterHtml(isArabic = true),
+            assets = listOf(assetHtml),
+        )
+        assertEquals(assetHtml.textContent, stateWithStarter.effectiveEntryHtml)
+
+        val customEntry = "<html><body>Edited Entry</body></html>"
+        val stateWithCustom = com.example.ui.WebForgeUiState(
+            htmlContent = customEntry,
+            assets = listOf(assetHtml),
+        )
+        assertEquals(customEntry, stateWithCustom.effectiveEntryHtml)
+    }
 }

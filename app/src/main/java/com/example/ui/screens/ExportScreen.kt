@@ -465,7 +465,7 @@ fun ExportScreen(
 
     if (showAppShellPreview) {
         AppShellPreviewDialog(
-            html = state.htmlContent,
+            html = state.effectiveEntryHtml,
             assets = state.assets,
             config = state.appConfig,
             onDismiss = { showAppShellPreview = false },

@@ -2,15 +2,15 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import com.example.ai.ensureFirebaseInitialized
+import com.example.ai.configureAppCheck
 import com.example.data.model.AppExportConfig
 import com.example.data.model.AppOrientation
 import com.example.data.model.AppSourceMode
 import com.example.domain.ZipArchiveManager
 import com.example.domain.apk.OnDeviceApkBuilder
+import com.google.firebase.FirebaseApp
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,10 +32,10 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `ensureFirebaseInitialized initializes default FirebaseApp without throwing`() {
+    fun `configureAppCheck initializes default FirebaseApp without throwing`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val app = ensureFirebaseInitialized(context)
-        assertNotNull("FirebaseApp should initialize cleanly with Context", app)
+        configureAppCheck(context, null)
+        assertTrue("FirebaseApp should initialize cleanly with Context", FirebaseApp.getApps(context).isNotEmpty())
     }
 
     @Test

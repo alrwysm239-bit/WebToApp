@@ -3,6 +3,7 @@ package com.example.ai
 import android.content.Context
 import android.util.Log
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.generationConfig
@@ -38,7 +39,11 @@ class GeminiStudioAssistant(
 ) {
 
     private fun prepareFirebase() {
-        appContext?.let { ensureFirebaseInitialized(it) }
+        appContext?.let {
+            if (FirebaseApp.getApps(it).isEmpty()) {
+                configureAppCheck(it, null)
+            }
+        }
     }
 
     private val generalModel by lazy {
