@@ -198,8 +198,9 @@ object AssetAndStoreGenerator {
         assets: List<ProjectAsset>,
         config: AppExportConfig,
     ): ByteArray {
-        val safeName = config.appName.ifBlank { projectName }
-        val pkg = config.packageName.ifBlank { "com.webforge.app" }
+        val safeName = config.appName.ifBlank { projectName }.trim().ifBlank { "WebForgeApp" }
+        val targetSlug = HtmlToolkit.slugify(safeName).replace("-", "").ifBlank { "WebForgeApp" }
+        val pkg = config.packageName.ifBlank { "com.webforge.$targetSlug" }
         val isUrlMode = config.sourceMode == com.example.data.model.AppSourceMode.URL && config.sourceUrl.isNotBlank()
         val serverBlock = if (isUrlMode) {
             val cleanUrl = config.sourceUrl.trim().let { if (it.startsWith("http")) it else "https://$it" }
@@ -244,6 +245,9 @@ object AssetAndStoreGenerator {
             com.example.data.model.AppOrientation.LANDSCAPE -> "<string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>"
             com.example.data.model.AppOrientation.AUTO -> "<string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>"
         }
+        val admobKeyXml = if (config.admobAppId.isNotBlank()) {
+            "\n  <key>GADApplicationIdentifier</key><string>${config.admobAppId.trim()}</string>"
+        } else ""
         files["ios_native/Info.plist"] = """
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -252,8 +256,12 @@ object AssetAndStoreGenerator {
               <key>CFBundleDisplayName</key><string>$safeName</string>
               <key>CFBundleIdentifier</key><string>$pkg</string>
               <key>CFBundleShortVersionString</key><string>${config.versionName}</string>
+              <key>CFBundleVersion</key><string>${config.versionCode}</string>
               <key>UIStatusBarHidden</key><${config.fullscreen}/>
-              <key>UISupportedInterfaceOrientations</key><array>$orientationList</array>
+              <key>NSCameraUsageDescription</key><string>Used by web content</string>
+              <key>NSMicrophoneUsageDescription</key><string>Used by web content</string>
+              <key>NSLocationWhenInUseUsageDescription</key><string>Used by web content</string>
+              <key>UISupportedInterfaceOrientations</key><array>$orientationList</array>$admobKeyXml
             </dict>
             </plist>
         """.trimIndent().toByteArray(Charsets.UTF_8)
@@ -263,25 +271,123 @@ object AssetAndStoreGenerator {
 
             class WebForgeViewController: UIViewController, WKNavigationDelegate {
                 var webView: WKWebView!
+                var refreshControl: UIRefreshControl!
+                let appLockEnabled: Bool = ${config.appLockEnabled && config.appLockPassword.isNotBlank()}
+                let appLockPassword: String = "${config.appLockPassword.replace("\"", "\\\"")}"
+                let pullToRefresh: Bool = ${config.pullToRefresh}
+
                 override var prefersStatusBarHidden: Bool { return ${config.fullscreen} }
+
                 override func viewDidLoad() {
                     super.viewDidLoad()
-                    webView = WKWebView(frame: view.bounds)
+                    let cfg = WKWebViewConfiguration()
+                    cfg.allowsInlineMediaPlayback = true
+                    webView = WKWebView(frame: view.bounds, configuration: cfg)
                     webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
                     webView.navigationDelegate = self
+                    ${if (config.customUserAgent.isNotBlank()) "webView.customUserAgent = \"${config.customUserAgent.replace("\"", "\\\"")}\"" else ""}
                     view.addSubview(webView)
+
+                    if pullToRefresh {
+                        refreshControl = UIRefreshControl()
+                        refreshControl.addTarget(self, action: #selector(reloadPage), for: .valueChanged)
+                        webView.scrollView.addSubview(refreshControl)
+                    }
+
                     ${if (isUrlMode) "if let u = URL(string: \"${config.sourceUrl.trim()}\") { webView.load(URLRequest(url: u)) }" else "if let url = Bundle.main.url(forResource: \"index\", withExtension: \"html\", subdirectory: \"www\") { webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }"}
+
+                    if appLockEnabled {
+                        presentLockPrompt()
+                    }
+                }
+
+                @objc func reloadPage() {
+                    webView.reload()
+                    refreshControl?.endRefreshing()
+                }
+
+                func presentLockPrompt() {
+                    let alert = UIAlertController(title: "$safeName", message: "Enter App Password", preferredStyle: .alert)
+                    alert.addTextField { tf in
+                        tf.isSecureTextEntry = true
+                        tf.placeholder = "Password / PIN"
+                    }
+                    alert.addAction(UIAlertAction(title: "Unlock", style: .default) { _ in
+                        let entered = alert.textFields?.first?.text ?? ""
+                        if entered != self.appLockPassword {
+                            self.presentLockPrompt()
+                        }
+                    })
+                    DispatchQueue.main.async { self.present(alert, animated: true) }
                 }
             }
         """.trimIndent().toByteArray(Charsets.UTF_8)
-        files["www/index.html"] = html.toByteArray(Charsets.UTF_8)
+
+        files["project.yml"] = """
+            name: $targetSlug
+            options:
+              bundleIdPrefix: com.webforge
+            targets:
+              $targetSlug:
+                type: application
+                platform: iOS
+                deploymentTarget: "14.0"
+                sources:
+                  - path: ios_native
+                  - path: www
+                    type: folder
+                settings:
+                  base:
+                    PRODUCT_BUNDLE_IDENTIFIER: $pkg
+                    INFOPLIST_FILE: ios_native/Info.plist
+                    CODE_SIGNING_ALLOWED: "NO"
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+
+        files[".github/workflows/build-ios-ipa.yml"] = """
+            name: Build iOS IPA (Free macOS Runner)
+            on:
+              push:
+                branches: [ main, master ]
+              workflow_dispatch:
+            jobs:
+              build-ipa:
+                runs-on: macos-latest
+                steps:
+                  - uses: actions/checkout@v4
+                  - name: Install XcodeGen
+                    run: brew install xcodegen
+                  - name: Generate Xcode Project
+                    run: xcodegen generate
+                  - name: Build Unsigned .app & Package .ipa
+                    run: |
+                      xcodebuild -project $targetSlug.xcodeproj -scheme $targetSlug -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO build SYMROOT=build
+                      mkdir -p Payload
+                      cp -R build/Release-iphoneos/$targetSlug.app Payload/
+                      zip -r $targetSlug.ipa Payload
+                  - uses: actions/upload-artifact@v4
+                    with:
+                      name: $targetSlug-ios-ipa
+                      path: $targetSlug.ipa
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+
+        files["www/index.html"] = com.example.domain.apk.OnDeviceApkBuilder.injectIosRuntimeShellHtml(
+            html.ifBlank { HtmlToolkit.defaultStarterHtml(isArabic = true) },
+            safeName,
+            config,
+        ).toByteArray(Charsets.UTF_8)
         val iconBytes = ZipArchiveManager.resolveIconPngBytes(context, config.customIconBase64)
         files["www/favicon.png"] = ZipArchiveManager.resizePng(iconBytes, 64)
         files["ios_native/AppIcon-1024.png"] = ZipArchiveManager.resizePng(iconBytes, 1024)
         assets.forEach { asset ->
             ZipArchiveManager.assetToBytes(asset)?.let { files["www/${asset.path}"] = it }
         }
-        files["README_IOS.md"] = "Generated by WebForge Studio ($safeName - $pkg). Supports HTML & URL modes.\nRun `npm install && npm run ios:sync` on macOS with Xcode to build IPA.\n".toByteArray(Charsets.UTF_8)
+        files["README_IOS.md"] = """
+            # $safeName — iOS App & Cloud .ipa Builder
+            - Bundle ID: `$pkg`
+            - Includes `ios_native/WebForgeViewController.swift`, `project.yml`, and `.github/workflows/build-ios-ipa.yml`.
+            - Push to GitHub to build an installable `.ipa` artifact automatically on GitHub's free `macos-latest` runners (no Mac needed!).
+            - Install the generated `.ipa` using AltStore, Sideloadly, or Xcode Organizer.
+        """.trimIndent().toByteArray(Charsets.UTF_8)
         return ZipArchiveManager.zipFileMap(files)
     }
 

@@ -57,13 +57,37 @@ class GeminiStudioAssistant {
         )
     }
 
-    fun streamGenerateWebsite(description: String, preferArabic: Boolean): Flow<String> = flow {
-        val langNote = if (preferArabic) "Use Arabic RTL (dir=\"rtl\" lang=\"ar\") by default." else "Use English."
+    fun streamGenerateWebsite(
+        description: String,
+        preferArabic: Boolean,
+        isMobileAppMode: Boolean = false,
+    ): Flow<String> = flow {
+        val langNote = if (preferArabic) {
+            "Use natural Arabic with <html lang=\"ar\" dir=\"rtl\"> by default, clean Cairo/system Arabic typography, and RTL layout."
+        } else {
+            "Use clean English UI copy and <html lang=\"en\" dir=\"ltr\">."
+        }
+        val modeGuide = if (isMobileAppMode) {
+            """
+            Build a COMPLETE interactive HTML5 Mobile Application designed to run inside an Android/iOS WebView or PWA:
+            - App shell layout with 100dvh, fixed top app bar, smooth bottom navigation bar switching between 3-4 functional views/tabs, and floating action controls.
+            - Full offline interactivity in vanilla JavaScript with localStorage persistence (saving items, settings, scores, cart, or tasks cleanly).
+            - Touch-friendly >=44px tap targets, smooth CSS transitions, dark/modern glassmorphic card UI, crisp inline SVG icons, and responsive viewport meta (width=device-width, initial-scale=1, viewport-fit=cover).
+            - Zero placeholder/dead buttons: every button, form, filter, and modal MUST genuinely work in JS.
+            """.trimIndent()
+        } else {
+            """
+            Build a COMPLETE modern responsive Website with embedded <style> and <script>:
+            - Responsive mobile-first layout (flexbox/grid), navigation header with mobile menu, hero section, rich feature cards, interactive JS widgets/forms, footer, and SEO meta tags.
+            - High-contrast accessible palette, sleek animations, and crisp inline SVG visuals.
+            - Zero dead buttons: every interactive control and form must work in JS.
+            """.trimIndent()
+        }
         val prompt = """
-            You are an expert frontend engineer. Create a complete, single-file, modern, responsive HTML5 website/web-app with embedded <style> and <script>.
+            You are an expert senior frontend & mobile HTML5 engineer inside WebForge Studio.
             $langNote
-            Use sleek modern CSS (flexbox/grid, gradients, clean cards, accessible contrast, interactive JS).
-            Return ONLY the complete HTML code starting with <!DOCTYPE html> without markdown fences.
+            $modeGuide
+            Return ONLY the complete single-file HTML5 document starting directly with <!DOCTYPE html> (NO markdown ``` fences, NO explanations).
             User Request: $description
         """.trimIndent()
 

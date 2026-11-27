@@ -136,6 +136,26 @@ data class AppExportConfig(
     val twaHost: String = "",
     val twaSha256: String = "",
     val admobAppId: String = "",
+    // Password Lock on Launch
+    val appLockEnabled: Boolean = false,
+    val appLockPassword: String = "",
+    val appLockTitle: String = "",
+    // Multi-Network Ads Monetization (Android & iOS)
+    val adsEnabled: Boolean = false,
+    val admobBannerId: String = "",
+    val admobInterstitialId: String = "",
+    val metaAudienceBannerId: String = "",
+    val unityGameId: String = "",
+    val appLovinSdkKey: String = "",
+    val customHtmlAdScript: String = "",
+    val adPlacementBottomBanner: Boolean = true,
+    // WebToApp Native Features
+    val blockAdsTrackers: Boolean = false,
+    val preventScreenshots: Boolean = false,
+    val bottomNavBarEnabled: Boolean = false,
+    val exitDialogEnabled: Boolean = false,
+    val deepLinkScheme: String = "",
+    val aboutAppText: String = "",
 )
 
 data class ConsoleEntry(

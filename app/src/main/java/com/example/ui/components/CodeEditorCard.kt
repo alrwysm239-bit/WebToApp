@@ -1,8 +1,12 @@
 package com.example.ui.components
 
 import android.graphics.Typeface
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.InputType
+import android.text.Layout
 import android.text.Spannable
 import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
@@ -22,6 +26,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.automirrored.rounded.WrapText
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
@@ -43,6 +49,7 @@ import androidx.compose.material.icons.rounded.FindReplace
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -78,7 +85,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-private const val SYNTAX_HIGHLIGHT_MAX_CHARS = 16_000
+private const val SYNTAX_HIGHLIGHT_MAX_CHARS = 12_000
+private const val HUGE_FILE_PREVIEW_THRESHOLD = 90_000
+private const val HUGE_FILE_PREVIEW_SLICE = 45_000
 
 private data class EditorPalette(
     val bg: Color,
@@ -94,11 +103,16 @@ private data class EditorPalette(
 private data class SyntaxSpanRange(val start: Int, val end: Int, val color: Int)
 
 private class NativeCodeHolder(
+    val vScroll: ScrollView,
+    val hScroll: HorizontalScrollView,
     val editText: EditText,
     val gutterView: TextView,
     var suppressWatcher: Boolean = false,
     var lastKnownText: String = "",
     var lastGutterLines: Int = -1,
+    var isInitialized: Boolean = false,
+    val mainHandler: Handler = Handler(Looper.getMainLooper()),
+    var pendingEmit: Runnable? = null,
 )
 
 @Composable
@@ -120,7 +134,25 @@ fun CodeEditorCard(
 ) {
     val ext = LocalWebForgeColors.current
     val strings = LocalStrings.current
+
+    val isHugeFile = code.length > HUGE_FILE_PREVIEW_THRESHOLD
     val isFastMode = code.length > SYNTAX_HIGHLIGHT_MAX_CHARS
+    var forceFullHugeEdit by remember(code.length > HUGE_FILE_PREVIEW_THRESHOLD) { mutableStateOf(false) }
+
+    val displayedCode = remember(code, isHugeFile, forceFullHugeEdit) {
+        if (isHugeFile && !forceFullHugeEdit) {
+            code.take(HUGE_FILE_PREVIEW_SLICE)
+        } else {
+            code
+        }
+    }
+    val isReadOnlyPreviewSlice = isHugeFile && !forceFullHugeEdit
+
+    val autoWrapSuggested = remember(displayedCode.length) {
+        displayedCode.length > SYNTAX_HIGHLIGHT_MAX_CHARS
+    }
+    var wordWrap by remember(autoWrapSuggested) { mutableStateOf(autoWrapSuggested) }
+    var isEditorLoading by remember { mutableStateOf(code.length > 8_000) }
 
     var showSearchReplace by remember { mutableStateOf(false) }
     var showEmmetBar by remember { mutableStateOf(false) }
@@ -131,6 +163,7 @@ fun CodeEditorCard(
     var holderRef by remember { mutableStateOf<NativeCodeHolder?>(null) }
 
     val latestOnCodeChange by rememberUpdatedState(onCodeChange)
+    val latestIsReadOnlySlice by rememberUpdatedState(isReadOnlyPreviewSlice)
 
     val palette = remember(editorTheme, ext) {
         when (editorTheme) {
@@ -181,20 +214,45 @@ fun CodeEditorCard(
         MaterialTheme.colorScheme.onSurface
     } else palette.text
 
-    // Debounced async syntax highlighting (only for <= 16KB; skips large files for 0-lag pasting/scrolling)
-    LaunchedEffect(code, palette, holderRef) {
+    // Non-blocking deferred text sync + gutter + optional lightweight syntax highlight
+    LaunchedEffect(displayedCode, palette, holderRef, isReadOnlyPreviewSlice) {
         val holder = holderRef ?: return@LaunchedEffect
+
+        // Yield 1 frame on initial enter so NavHost / tab transitions never stutter
+        if (!holder.isInitialized) {
+            delay(20)
+            holder.isInitialized = true
+        }
+
+        if (holder.lastKnownText != displayedCode) {
+            isEditorLoading = displayedCode.length > 15_000
+            if (displayedCode.length > 15_000) delay(16)
+            holder.suppressWatcher = true
+            holder.lastKnownText = displayedCode
+            holder.editText.setText(displayedCode)
+            holder.editText.isEnabled = true
+            holder.editText.isFocusable = !isReadOnlyPreviewSlice
+            holder.editText.isFocusableInTouchMode = !isReadOnlyPreviewSlice
+            holder.suppressWatcher = false
+            isEditorLoading = false
+        } else {
+            isEditorLoading = false
+        }
+
         val gutterUpdate = withContext(Dispatchers.Default) {
-            val lineCount = if (code.isEmpty()) 1 else code.count { it == '\n' } + 1
-            if (holder.lastGutterLines == lineCount) null
+            var lines = 1
+            for (i in 0 until displayedCode.length) {
+                if (displayedCode[i] == '\n') lines++
+            }
+            if (holder.lastGutterLines == lines) null
             else {
-                val capped = lineCount.coerceAtMost(2500)
-                lineCount to buildString(capped * 4) {
+                val capped = lines.coerceAtMost(1500)
+                lines to buildString(capped * 4) {
                     for (i in 1..capped) {
                         append(i)
                         if (i < capped) append('\n')
                     }
-                    if (lineCount > capped) append("\n...")
+                    if (lines > capped) append("\n...")
                 }
             }
         }
@@ -204,8 +262,7 @@ fun CodeEditorCard(
         }
 
         val editable = holder.editText.text ?: return@LaunchedEffect
-        if (code.isEmpty() || code.length > SYNTAX_HIGHLIGHT_MAX_CHARS) {
-            // Strip any previous spans cleanly if switching into large fast mode
+        if (displayedCode.isEmpty() || displayedCode.length > SYNTAX_HIGHLIGHT_MAX_CHARS) {
             val existing = editable.getSpans(0, editable.length, ForegroundColorSpan::class.java)
             if (existing.isNotEmpty()) {
                 existing.forEach { editable.removeSpan(it) }
@@ -213,12 +270,12 @@ fun CodeEditorCard(
             return@LaunchedEffect
         }
 
-        delay(140)
+        delay(160)
         val spans = withContext(Dispatchers.Default) {
-            computeSyntaxSpans(code, palette)
+            computeSyntaxSpans(displayedCode, palette)
         }
         val currentEditable = holder.editText.text ?: return@LaunchedEffect
-        if (currentEditable.length == code.length) {
+        if (currentEditable.length == displayedCode.length) {
             currentEditable.getSpans(0, currentEditable.length, ForegroundColorSpan::class.java).forEach {
                 currentEditable.removeSpan(it)
             }
@@ -236,7 +293,7 @@ fun CodeEditorCard(
     }
 
     Column(modifier = modifier) {
-        // Editor Micro-Toolbar (Paste, Undo, Redo, Find & Replace, Emmet, Lint, Fast Mode indicator)
+        // Editor Micro-Toolbar (Paste, Wrap, Fast Mode, Undo, Redo, Find & Replace, Emmet, Lint)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -261,6 +318,23 @@ fun CodeEditorCard(
                 }
             }
 
+            Surface(
+                onClick = { wordWrap = !wordWrap },
+                shape = RoundedCornerShape(10.dp),
+                color = if (wordWrap) ext.accent.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, if (wordWrap) ext.accent else ext.cardBorder),
+                modifier = Modifier.testTag("editor_toggle_wrap"),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.WrapText, null, tint = if (wordWrap) ext.accent else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
+                    Text(strings.wrapLinesLabel, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
             if (isFastMode) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -274,7 +348,7 @@ fun CodeEditorCard(
                     ) {
                         Icon(Icons.Rounded.Speed, null, tint = ext.success, modifier = Modifier.size(14.dp))
                         Text(
-                            text = "${code.length / 1024} KB ⚡",
+                            text = "${(code.length / 1024).coerceAtLeast(1)} KB ⚡",
                             style = MaterialTheme.typography.labelSmall,
                             color = ext.success,
                             fontWeight = FontWeight.Bold,
@@ -362,6 +436,35 @@ fun CodeEditorCard(
                         color = lintColor,
                         fontWeight = FontWeight.Bold,
                     )
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = isHugeFile && !forceFullHugeEdit) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = ext.warning.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = if (isRtlUi) {
+                            "ملف ضخم (${code.length / 1024} KB) — وضع العرض السريع لمنع التعليق. المعاينة والبناء يستخدمان الكود كاملاً."
+                        } else {
+                            "Large file (${code.length / 1024} KB) — Fast Preview active for 0-lag. Preview & Builds use full code."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ext.warning,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { forceFullHugeEdit = true }) {
+                        Text(if (isRtlUi) "تحرير كامل" else "Edit Full", color = ext.accent, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -469,8 +572,7 @@ fun CodeEditorCard(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Native Android EditText inside a hardware-accelerated ScrollView for instant keyboard,
-        // native keyboard clipboard paste, and 0-ANR editing even for 300KB+ HTML files.
+        // Hardware-accelerated non-blocking EditText container (0ms tab switch, instant keyboard)
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             GlowingFrameCard(
                 modifier = Modifier
@@ -478,142 +580,169 @@ fun CodeEditorCard(
                     .height(275.dp),
                 containerColor = palette.bg,
             ) {
-                val bgArgb = palette.bg.toArgb()
-                val gutterArgb = palette.gutter.toArgb()
-                val textArgb = effectiveTextColor.toArgb()
-                val commentArgb = palette.comment.toArgb()
+                Box(modifier = Modifier.fillMaxWidth().height(275.dp)) {
+                    val bgArgb = palette.bg.toArgb()
+                    val gutterArgb = palette.gutter.toArgb()
+                    val textArgb = effectiveTextColor.toArgb()
+                    val commentArgb = palette.comment.toArgb()
 
-                AndroidView(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(275.dp)
-                        .testTag("html_code_editor"),
-                    factory = { ctx ->
-                        val density = ctx.resources.displayMetrics.density
-                        fun dp(v: Int) = (v * density).toInt()
+                    AndroidView(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(275.dp)
+                            .testTag("html_code_editor"),
+                        factory = { ctx ->
+                            val density = ctx.resources.displayMetrics.density
+                            fun dp(v: Int) = (v * density).toInt()
 
-                        val vScroll = ScrollView(ctx).apply {
-                            isFillViewport = true
-                            setBackgroundColor(bgArgb)
-                            isVerticalScrollBarEnabled = true
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        }
-
-                        val row = LinearLayout(ctx).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.WRAP_CONTENT,
-                            )
-                        }
-
-                        val gutterView = TextView(ctx).apply {
-                            setBackgroundColor(gutterArgb)
-                            setTextColor(commentArgb)
-                            typeface = Typeface.MONOSPACE
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
-                            gravity = Gravity.END
-                            setPadding(dp(8), dp(12), dp(8), dp(12))
-                            setLineSpacing(dp(4).toFloat(), 1f)
-                            text = "1"
-                            minWidth = dp(38)
-                            layoutParams = LinearLayout.LayoutParams(
-                                ViewGroup.LayoutParams.WRAP_CONTENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        }
-
-                        val hScroll = HorizontalScrollView(ctx).apply {
-                            isFillViewport = true
-                            isHorizontalScrollBarEnabled = true
-                            layoutParams = LinearLayout.LayoutParams(
-                                0,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                1f,
-                            )
-                        }
-
-                        val editText = EditText(ctx).apply {
-                            background = null
-                            setTextColor(textArgb)
-                            setHintTextColor(commentArgb)
-                            hint = "<!-- Paste or write HTML / CSS / JS here -->"
-                            typeface = Typeface.MONOSPACE
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
-                            setLineSpacing(dp(4).toFloat(), 1f)
-                            gravity = Gravity.TOP or Gravity.START
-                            textDirection = View.TEXT_DIRECTION_LTR
-                            layoutDirection = View.LAYOUT_DIRECTION_LTR
-                            setPadding(dp(12), dp(12), dp(16), dp(24))
-                            minHeight = dp(265)
-                            inputType = InputType.TYPE_CLASS_TEXT or
-                                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                            isFocusable = true
-                            isFocusableInTouchMode = true
-                            setHorizontallyScrolling(true)
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.WRAP_CONTENT,
-                            )
-                            setOnClickListener {
-                                requestFocus()
-                                val imm = ctx.getSystemService(InputMethodManager::class.java)
-                                imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                            val vScroll = ScrollView(ctx).apply {
+                                isFillViewport = true
+                                setBackgroundColor(bgArgb)
+                                isVerticalScrollBarEnabled = true
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
                             }
-                        }
 
-                        val holder = NativeCodeHolder(editText = editText, gutterView = gutterView)
-                        holderRef = holder
+                            val row = LinearLayout(ctx).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                                )
+                            }
 
-                        editText.addTextChangedListener(object : TextWatcher {
-                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                            override fun afterTextChanged(s: Editable?) {
-                                if (holder.suppressWatcher) return
-                                val newStr = s?.toString().orEmpty()
-                                if (newStr != holder.lastKnownText) {
-                                    holder.lastKnownText = newStr
-                                    latestOnCodeChange(newStr)
+                            val gutterView = TextView(ctx).apply {
+                                setBackgroundColor(gutterArgb)
+                                setTextColor(commentArgb)
+                                typeface = Typeface.MONOSPACE
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
+                                gravity = Gravity.END
+                                setPadding(dp(8), dp(12), dp(8), dp(12))
+                                setLineSpacing(dp(4).toFloat(), 1f)
+                                text = "1"
+                                minWidth = dp(38)
+                                layoutParams = LinearLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
+                            }
+
+                            val hScroll = HorizontalScrollView(ctx).apply {
+                                isFillViewport = true
+                                isHorizontalScrollBarEnabled = !wordWrap
+                                layoutParams = LinearLayout.LayoutParams(
+                                    0,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    1f,
+                                )
+                            }
+
+                            val editText = EditText(ctx).apply {
+                                background = null
+                                setTextColor(textArgb)
+                                setHintTextColor(commentArgb)
+                                hint = "<!-- Paste or write HTML / CSS / JS here -->"
+                                typeface = Typeface.MONOSPACE
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
+                                setLineSpacing(dp(4).toFloat(), 1f)
+                                gravity = Gravity.TOP or Gravity.START
+                                textDirection = View.TEXT_DIRECTION_LTR
+                                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                                setPadding(dp(12), dp(12), dp(16), dp(24))
+                                minHeight = dp(265)
+                                inputType = InputType.TYPE_CLASS_TEXT or
+                                    InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                                imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                    breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+                                    hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                                }
+                                setHorizontallyScrolling(!wordWrap)
+                                isFocusable = !isReadOnlyPreviewSlice
+                                isFocusableInTouchMode = !isReadOnlyPreviewSlice
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                                )
+                                setOnClickListener {
+                                    if (!latestIsReadOnlySlice) {
+                                        requestFocus()
+                                        val imm = ctx.getSystemService(InputMethodManager::class.java)
+                                        imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                                    }
                                 }
                             }
-                        })
 
-                        holder.suppressWatcher = true
-                        holder.lastKnownText = code
-                        editText.setText(code)
-                        holder.suppressWatcher = false
+                            val holder = NativeCodeHolder(
+                                vScroll = vScroll,
+                                hScroll = hScroll,
+                                editText = editText,
+                                gutterView = gutterView,
+                            )
+                            holderRef = holder
 
-                        hScroll.addView(editText)
-                        row.addView(gutterView)
-                        row.addView(hScroll)
-                        vScroll.addView(row)
-                        vScroll.tag = holder
-                        vScroll
-                    },
-                    update = { vScroll ->
-                        val holder = vScroll.tag as? NativeCodeHolder ?: return@AndroidView
-                        vScroll.setBackgroundColor(bgArgb)
-                        holder.gutterView.setBackgroundColor(gutterArgb)
-                        holder.gutterView.setTextColor(commentArgb)
-                        holder.gutterView.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
-                        holder.editText.setTextColor(textArgb)
-                        holder.editText.setHintTextColor(commentArgb)
-                        holder.editText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
+                            editText.addTextChangedListener(object : TextWatcher {
+                                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                                override fun afterTextChanged(s: Editable?) {
+                                    if (holder.suppressWatcher || latestIsReadOnlySlice) return
+                                    holder.pendingEmit?.let { holder.mainHandler.removeCallbacks(it) }
+                                    val emitTask = Runnable {
+                                        val newStr = s?.toString().orEmpty()
+                                        if (newStr != holder.lastKnownText) {
+                                            holder.lastKnownText = newStr
+                                            latestOnCodeChange(newStr)
+                                        }
+                                    }
+                                    holder.pendingEmit = emitTask
+                                    holder.mainHandler.postDelayed(emitTask, 90L)
+                                }
+                            })
 
-                        if (holder.lastKnownText != code && holder.editText.text?.toString() != code) {
-                            holder.suppressWatcher = true
-                            holder.lastKnownText = code
-                            holder.editText.setText(code)
-                            holder.editText.setSelection(code.length.coerceAtMost(holder.editText.text?.length ?: 0))
-                            holder.suppressWatcher = false
-                        }
-                    },
-                )
+                            hScroll.addView(editText)
+                            row.addView(gutterView)
+                            row.addView(hScroll)
+                            vScroll.addView(row)
+                            vScroll.tag = holder
+                            vScroll
+                        },
+                        update = { vScroll ->
+                            val holder = vScroll.tag as? NativeCodeHolder ?: return@AndroidView
+                            vScroll.setBackgroundColor(bgArgb)
+                            holder.gutterView.setBackgroundColor(gutterArgb)
+                            holder.gutterView.setTextColor(commentArgb)
+                            holder.gutterView.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
+                            holder.editText.setTextColor(textArgb)
+                            holder.editText.setHintTextColor(commentArgb)
+                            holder.editText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
+                            holder.editText.setHorizontallyScrolling(!wordWrap)
+                            holder.hScroll.isHorizontalScrollBarEnabled = !wordWrap
+                            holder.editText.isFocusable = !isReadOnlyPreviewSlice
+                            holder.editText.isFocusableInTouchMode = !isReadOnlyPreviewSlice
+                            if (wordWrap) {
+                                val targetW = holder.hScroll.width
+                                if (targetW > 0 && holder.editText.maxWidth != targetW) {
+                                    holder.editText.maxWidth = targetW
+                                }
+                            } else if (holder.editText.maxWidth != Int.MAX_VALUE) {
+                                holder.editText.maxWidth = Int.MAX_VALUE
+                            }
+                        },
+                    )
+
+                    if (isEditorLoading) {
+                        LinearProgressIndicator(
+                            color = ext.accent,
+                            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                        )
+                    }
+                }
             }
         }
 

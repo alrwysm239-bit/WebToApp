@@ -51,6 +51,7 @@ import com.example.ui.WebForgeUiState
 import com.example.ui.components.AndroidConfigSheet
 import com.example.ui.components.AppShellPreviewDialog
 import com.example.ui.components.ExportOptionCard
+import com.example.ui.components.FreeStorePublishGuideDialog
 import com.example.ui.components.FreeWebBuilderPortalDialog
 import com.example.ui.components.GradientButton
 import com.example.ui.components.HostingDeploySheet
@@ -83,6 +84,7 @@ fun ExportScreen(
     onBuildDirectApk: (saveToDevice: Boolean) -> Unit,
     onExportAndroidZip: (saveToDevice: Boolean) -> Unit,
     onExportKeystoreGuide: (saveToDevice: Boolean) -> Unit,
+    onExportIosIpa: (saveToDevice: Boolean) -> Unit,
     onExportIosWebClip: (saveToDevice: Boolean) -> Unit,
     onExportIosZip: (saveToDevice: Boolean) -> Unit,
     onExportElectronZip: (saveToDevice: Boolean) -> Unit,
@@ -108,6 +110,7 @@ fun ExportScreen(
     var showIosDesktopSheet by remember { mutableStateOf(false) }
     var showPwaSheet by remember { mutableStateOf(false) }
     var showStorePackDialog by remember { mutableStateOf(false) }
+    var showFreeStoreGuide by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
     var showAppShellPreview by remember { mutableStateOf(false) }
     var showFreeWebBuilderPortal by remember { mutableStateOf(false) }
@@ -280,6 +283,17 @@ fun ExportScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             ExportOptionCard(
+                title = strings.freeStorePublishBtn,
+                subtitle = "Google Play (.aab) • App Store (.ipa) • Free WebClip/AltStore",
+                badgeColor = WebForgeSuccess,
+                icon = Icons.Rounded.Storefront,
+                testTag = "export_free_store_guide_card",
+                onClick = { showFreeStoreGuide = true },
+                trailing = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionCard(
                 title = strings.qrCardTitle,
                 subtitle = strings.qrCardSubtitle,
                 badgeColor = WebForgeSoftViolet,
@@ -353,6 +367,10 @@ fun ExportScreen(
                 showAndroidSheet = false
                 showAppShellPreview = true
             },
+            onOpenStoreGuide = {
+                showAndroidSheet = false
+                showFreeStoreGuide = true
+            },
             onDismiss = { showAndroidSheet = false },
         )
     }
@@ -363,9 +381,14 @@ fun ExportScreen(
             publishedUrl = state.publishedUrl,
             isRtl = state.settings.language.isRtl,
             onConfigChange = onUpdateAppConfig,
+            onExportIosIpa = onExportIosIpa,
             onExportIosWebClip = onExportIosWebClip,
             onExportIosZip = onExportIosZip,
             onExportElectronZip = onExportElectronZip,
+            onOpenStoreGuide = {
+                showIosDesktopSheet = false
+                showFreeStoreGuide = true
+            },
             onDismiss = { showIosDesktopSheet = false },
         )
     }
@@ -387,6 +410,29 @@ fun ExportScreen(
             isRtl = state.settings.language.isRtl,
             onExportStorePack = onExportStorePack,
             onDismiss = { showStorePackDialog = false },
+        )
+    }
+
+    if (showFreeStoreGuide) {
+        FreeStorePublishGuideDialog(
+            isRtl = state.settings.language.isRtl,
+            onExportAabProject = {
+                showFreeStoreGuide = false
+                onExportAndroidZip(true)
+            },
+            onExportStorePack = {
+                showFreeStoreGuide = false
+                showStorePackDialog = true
+            },
+            onExportIosIpa = {
+                showFreeStoreGuide = false
+                onExportIosIpa(true)
+            },
+            onExportIosXcodeZip = {
+                showFreeStoreGuide = false
+                onExportIosZip(true)
+            },
+            onDismiss = { showFreeStoreGuide = false },
         )
     }
 

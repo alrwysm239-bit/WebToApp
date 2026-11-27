@@ -155,7 +155,9 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val initialSettings = settingsRepo.settingsFlow.first()
             if (initialSettings.lastProjectId > 0L) {
-                val loaded = projectRepo.loadProject(initialSettings.lastProjectId)
+                val loaded = withContext(Dispatchers.IO) {
+                    projectRepo.loadProject(initialSettings.lastProjectId)
+                }
                 if (loaded != null) {
                     _uiState.update {
                         it.copy(
@@ -167,10 +169,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                             publishedUrl = loaded.publishedUrl,
                             lastProvider = loaded.lastProvider,
                             isFavorite = loaded.isFavorite,
-                            codeIssues = CodeLinterAndAudit.detectCodeIssues(loaded.htmlContent),
                             previewRevision = it.previewRevision + 1,
                         )
                     }
+                    scheduleLintDetection(loaded.htmlContent)
                     return@launch
                 }
             }
@@ -181,9 +183,9 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     projectName = starterName,
                     htmlContent = starterHtml,
                     appConfig = it.appConfig.copy(appName = starterName),
-                    codeIssues = CodeLinterAndAudit.detectCodeIssues(starterHtml),
                 )
             }
+            scheduleLintDetection(starterHtml)
         }
     }
 
@@ -422,10 +424,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                 selectedAssetPath = null,
                 publishedUrl = null,
                 appConfig = AppExportConfig(appName = name, packageName = "com.webforge.$slug"),
-                codeIssues = CodeLinterAndAudit.detectCodeIssues(template.html),
                 previewRevision = it.previewRevision + 1,
             )
         }
+        scheduleLintDetection(template.html)
         scheduleAutoSave()
     }
 
@@ -443,10 +445,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                 publishedUrl = null,
                 isFavorite = false,
                 appConfig = AppExportConfig(appName = name),
-                codeIssues = CodeLinterAndAudit.detectCodeIssues(html),
                 previewRevision = it.previewRevision + 1,
             )
         }
+        scheduleLintDetection(html)
     }
 
     fun clearCode() = updateCode("")
@@ -468,10 +470,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                         selectedAssetPath = null,
                         publishedUrl = null,
                         appConfig = it.appConfig.copy(appName = imported.suggestedName, packageName = "com.webforge.$slug"),
-                        codeIssues = CodeLinterAndAudit.detectCodeIssues(imported.entryHtml),
                         previewRevision = it.previewRevision + 1,
                     )
                 }
+                scheduleLintDetection(imported.entryHtml)
                 saveCurrentProjectInternal("Imported file")
                 emitMessage("${imported.suggestedName} (${imported.assets.size + 1} ${strings().assetsCountLabel})")
             }.onFailure { err ->
@@ -499,10 +501,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                             assets = emptyList(),
                             selectedAssetPath = null,
                             appConfig = it.appConfig.copy(appName = res.suggestedName),
-                            codeIssues = CodeLinterAndAudit.detectCodeIssues(res.entryHtml),
                             previewRevision = it.previewRevision + 1,
                         )
                     }
+                    scheduleLintDetection(res.entryHtml)
                     saveCurrentProjectInternal("Imported URL")
                     emitMessage("${res.suggestedName} ✓")
                 }
@@ -531,10 +533,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                             assets = res.assets,
                             selectedAssetPath = null,
                             appConfig = it.appConfig.copy(appName = res.suggestedName),
-                            codeIssues = CodeLinterAndAudit.detectCodeIssues(res.entryHtml),
                             previewRevision = it.previewRevision + 1,
                         )
                     }
+                    scheduleLintDetection(res.entryHtml)
                     saveCurrentProjectInternal("Imported GitHub")
                     emitMessage("${res.suggestedName} (${res.assets.size + 1} ${strings().assetsCountLabel})")
                 }
@@ -752,13 +754,36 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun exportIosIpa(saveViaSaf: Boolean) {
+        viewModelScope.launch {
+            val st = _uiState.value
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    OnDeviceApkBuilder.buildIosIpaArchive(
+                        context = context,
+                        projectName = st.projectName,
+                        html = st.htmlContent,
+                        assets = st.assets,
+                        config = st.appConfig,
+                    )
+                }
+            }.onSuccess { bytes ->
+                val safeFile = HtmlToolkit.safeFileName(st.appConfig.appName.ifBlank { st.projectName })
+                dispatchExport("$safeFile.ipa", "application/octet-stream", bytes, saveViaSaf)
+                emitMessage(strings().exportedSuccess)
+            }.onFailure { err ->
+                emitMessage(err.localizedMessage ?: "IPA build failed")
+            }
+        }
+    }
+
     fun exportIosCapacitorZip(saveViaSaf: Boolean) {
         viewModelScope.launch {
             val st = _uiState.value
             val bytes = withContext(Dispatchers.IO) {
                 AssetAndStoreGenerator.buildIosCapacitorZip(context, st.projectName, st.htmlContent, st.assets, st.appConfig)
             }
-            dispatchExport("${HtmlToolkit.slugify(st.appConfig.appName)}-ios-capacitor.zip", "application/zip", bytes, saveViaSaf)
+            dispatchExport("${HtmlToolkit.slugify(st.appConfig.appName)}-ios-xcode-ipa-workflow.zip", "application/zip", bytes, saveViaSaf)
         }
     }
 
@@ -953,7 +978,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     fun resetDeployState() = _uiState.update { it.copy(deployState = DeployState.Idle) }
 
     // Gemini AI Studio Assistant
-    fun generateSiteFromPrompt(prompt: String) {
+    fun generateSiteFromPrompt(prompt: String, mobileAppMode: Boolean = false) {
         if (prompt.isBlank()) return
         if (_uiState.value.isEffectiveOffline) {
             _uiState.update { it.copy(aiTaskState = AiTaskState.Error(strings().offlineDeployBlocked)) }
@@ -964,7 +989,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { it.copy(aiTaskState = AiTaskState.Loading) }
             try {
                 var lastChunk = ""
-                geminiAssistant.streamGenerateWebsite(prompt, preferAr).collect { partial ->
+                geminiAssistant.streamGenerateWebsite(prompt, preferAr, mobileAppMode).collect { partial ->
                     lastChunk = partial
                     _uiState.update { it.copy(aiTaskState = AiTaskState.Streaming(partial)) }
                 }
@@ -974,7 +999,13 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     _uiState.update {
                         it.copy(
                             aiTaskState = AiTaskState.Success(
-                                text = if (preferAr) "تم توليد الصفحة! اضغط تطبيق لاعتمادها." else "Page generated! Tap Apply to use it.",
+                                text = if (preferAr) {
+                                    if (mobileAppMode) "تم بناء تطبيق HTML5 بنجاح! اختر المعاينة الحية أو بناء APK مباشرة."
+                                    else "تم توليد الموقع بنجاح! اختر المعاينة الحية أو تطبيق الكود."
+                                } else {
+                                    if (mobileAppMode) "HTML5 app built! Tap Apply & Preview or Build APK."
+                                    else "Website generated! Tap Apply to use or preview it."
+                                },
                                 proposedCode = clean,
                             ),
                         )
@@ -1101,7 +1132,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
 
     fun reopenProject(projectId: Long) {
         viewModelScope.launch {
-            val loaded = projectRepo.loadProject(projectId) ?: return@launch
+            val loaded = withContext(Dispatchers.IO) { projectRepo.loadProject(projectId) } ?: return@launch
             _uiState.update {
                 it.copy(
                     activeProjectId = loaded.id,
@@ -1113,10 +1144,10 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     publishedUrl = loaded.publishedUrl,
                     lastProvider = loaded.lastProvider,
                     isFavorite = loaded.isFavorite,
-                    codeIssues = CodeLinterAndAudit.detectCodeIssues(loaded.htmlContent),
                     previewRevision = it.previewRevision + 1,
                 )
             }
+            scheduleLintDetection(loaded.htmlContent)
             settingsRepo.setLastProjectId(loaded.id)
         }
     }
@@ -1132,16 +1163,16 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
 
     fun restoreSnapshot(snapshotId: Long) {
         viewModelScope.launch {
-            val restored = projectRepo.restoreSnapshot(snapshotId) ?: return@launch
+            val restored = withContext(Dispatchers.IO) { projectRepo.restoreSnapshot(snapshotId) } ?: return@launch
             _uiState.update {
                 it.copy(
                     htmlContent = restored.first,
                     assets = restored.second,
                     selectedAssetPath = null,
-                    codeIssues = CodeLinterAndAudit.detectCodeIssues(restored.first),
                     previewRevision = it.previewRevision + 1,
                 )
             }
+            scheduleLintDetection(restored.first)
             scheduleAutoSave()
         }
     }

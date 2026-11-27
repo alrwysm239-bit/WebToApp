@@ -8,16 +8,20 @@ import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,13 +39,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.PhoneIphone
 import androidx.compose.material.icons.rounded.Public
@@ -49,6 +58,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -182,9 +192,11 @@ fun IosDesktopSheet(
     publishedUrl: String?,
     isRtl: Boolean,
     onConfigChange: ((AppExportConfig) -> AppExportConfig) -> Unit,
+    onExportIosIpa: (saveToDevice: Boolean) -> Unit,
     onExportIosWebClip: (saveToDevice: Boolean) -> Unit,
     onExportIosZip: (saveToDevice: Boolean) -> Unit,
     onExportElectronZip: (saveToDevice: Boolean) -> Unit,
+    onOpenStoreGuide: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -266,6 +278,27 @@ fun IosDesktopSheet(
                 Switch(checked = config.fullscreen, onCheckedChange = { v -> onConfigChange { it.copy(fullscreen = v) } })
             }
 
+            // Inherited Lock & Ads summary pill
+            if (config.appLockEnabled || config.adsEnabled) {
+                Surface(
+                    color = ext.success.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, ext.success.copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = buildString {
+                            if (isRtl) append("مُفعّل داخل تطبيق الآيفون: ") else append("Active in iOS build: ")
+                            if (config.appLockEnabled) append("🔒 Password Lock  ")
+                            if (config.adsEnabled) append("💰 Ads Banner/Script")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ext.success,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
+            }
+
             Surface(
                 color = ext.accent.copy(alpha = 0.12f),
                 border = BorderStroke(1.dp, ext.accent.copy(alpha = 0.45f)),
@@ -273,7 +306,11 @@ fun IosDesktopSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = strings.iosDirectProfileNote,
+                    text = if (isRtl) {
+                        "تصدير حزمة IPA حقيقية (Payload/*.app) للتثبيت عبر AltStore / Sideloadly أو استخدام ملف .mobileconfig المباشر بدون Xcode، بالإضافة لمشروع Xcode + بناء سحابي IPA مجاني على macOS."
+                    } else {
+                        "Exports a real .ipa Payload bundle (for AltStore/Sideloadly), a zero-Xcode .mobileconfig iOS installer, and an Xcode Swift project with free macOS Cloud .ipa GitHub Actions."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = ext.accent,
                     modifier = Modifier.padding(12.dp),
@@ -281,10 +318,24 @@ fun IosDesktopSheet(
             }
 
             GradientButton(
-                text = strings.iosDirectProfileBtn,
+                text = strings.exportIosIpaBtn,
                 icon = Icons.Rounded.PhoneIphone,
                 brush = MintCtaBrush,
                 contentColor = Color(0xFF0C0A20),
+                onClick = { onExportIosIpa(true) },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "export_ios_ipa_button",
+            )
+            OutlinedGlowButton(
+                text = if (isRtl) "مشاركة ملف الآيفون (.ipa)" else "Share iOS Package (.ipa)",
+                icon = Icons.Rounded.Share,
+                onClick = { onExportIosIpa(false) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            GradientButton(
+                text = strings.iosDirectProfileBtn,
+                icon = Icons.Rounded.PhoneIphone,
                 onClick = { onExportIosWebClip(true) },
                 modifier = Modifier.fillMaxWidth(),
                 testTag = "export_ios_webclip_button",
@@ -296,16 +347,10 @@ fun IosDesktopSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            GradientButton(
-                text = if (isRtl) "تصدير مشروع Xcode / Capacitor iOS (.zip)" else "Export Xcode / Capacitor iOS (.zip)",
+            OutlinedGlowButton(
+                text = if (isRtl) "تصدير مشروع Xcode + بناء IPA سحابي (.zip)" else "Export Xcode + Cloud IPA Workflow (.zip)",
                 icon = Icons.Rounded.PhoneIphone,
                 onClick = { onExportIosZip(true) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedGlowButton(
-                text = if (isRtl) "مشاركة مشروع Xcode iOS (.zip)" else "Share Xcode / Capacitor iOS (.zip)",
-                icon = Icons.Rounded.Share,
-                onClick = { onExportIosZip(false) },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedGlowButton(
@@ -314,6 +359,11 @@ fun IosDesktopSheet(
                 onClick = { onExportElectronZip(true) },
                 modifier = Modifier.fillMaxWidth(),
             )
+            TextButton(onClick = onOpenStoreGuide, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Storefront, null, Modifier.size(16.dp), tint = ext.accent)
+                Spacer(Modifier.width(6.dp))
+                Text(strings.freeStorePublishBtn, color = ext.accent)
+            }
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -494,6 +544,11 @@ fun AppShellPreviewDialog(
 ) {
     val strings = LocalStrings.current
     var showSplash by remember { mutableStateOf(config.splashEnabled) }
+    var isLocked by remember(config.appLockEnabled, config.appLockPassword) {
+        mutableStateOf(config.appLockEnabled && config.appLockPassword.isNotBlank())
+    }
+    var lockInput by remember { mutableStateOf("") }
+    var lockWrong by remember { mutableStateOf(false) }
     var simulatedLandscape by remember { mutableStateOf(config.orientation == AppOrientation.LANDSCAPE) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     val htmlBytes = remember(html) {
@@ -522,67 +577,114 @@ fun AppShellPreviewDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(modifier = Modifier.fillMaxSize().background(splashBg)) {
-            val latestAssets = remember(assets) { assets.associateBy { it.path.lowercase().trimStart('/') } }
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        setBackgroundColor(splashBgInt)
-                        webViewRef = this
-                        settings.javaScriptEnabled = true
-                        settings.javaScriptCanOpenWindowsAutomatically = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.allowFileAccess = true
-                        settings.allowContentAccess = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        settings.useWideViewPort = true
-                        settings.loadWithOverviewMode = true
-                        settings.builtInZoomControls = config.enableZoom
-                        settings.displayZoomControls = false
-                        if (config.desktopMode) {
-                            settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                        } else if (config.customUserAgent.isNotBlank()) {
-                            settings.userAgentString = config.customUserAgent
-                        }
-                        runCatching {
-                            CookieManager.getInstance().setAcceptCookie(true)
-                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        }
-                        webChromeClient = WebChromeClient()
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                                val url = request?.url ?: return null
-                                if (url.host.equals("webforge.local", ignoreCase = true)) {
-                                    val rel = url.path?.trimStart('/')?.lowercase().orEmpty()
-                                    val cors = mapOf("Access-Control-Allow-Origin" to "*")
-                                    if (rel.isEmpty() || rel == "index.html") {
-                                        return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
+            Column(modifier = Modifier.fillMaxSize()) {
+                val latestAssets = remember(assets) { assets.associateBy { it.path.lowercase().trimStart('/') } }
+                AndroidView(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            setBackgroundColor(splashBgInt)
+                            webViewRef = this
+                            settings.javaScriptEnabled = true
+                            settings.javaScriptCanOpenWindowsAutomatically = true
+                            settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.allowFileAccess = true
+                            settings.allowContentAccess = true
+                            settings.mediaPlaybackRequiresUserGesture = false
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.builtInZoomControls = config.enableZoom
+                            settings.displayZoomControls = false
+                            if (config.desktopMode) {
+                                settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                            } else if (config.customUserAgent.isNotBlank()) {
+                                settings.userAgentString = config.customUserAgent
+                            }
+                            runCatching {
+                                CookieManager.getInstance().setAcceptCookie(true)
+                                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                            }
+                            webChromeClient = WebChromeClient()
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                    val url = request?.url ?: return null
+                                    if (url.host.equals("webforge.local", ignoreCase = true)) {
+                                        val rel = url.path?.trimStart('/')?.lowercase().orEmpty()
+                                        val cors = mapOf("Access-Control-Allow-Origin" to "*")
+                                        if (rel.isEmpty() || rel == "index.html") {
+                                            return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
+                                        }
+                                        val asset = latestAssets[rel]
+                                            ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$rel") }?.value
+                                        if (asset != null) {
+                                            val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
+                                            return WebResourceResponse(asset.mimeType, "UTF-8", 200, "OK", cors, ByteArrayInputStream(bytes))
+                                        }
                                     }
-                                    val asset = latestAssets[rel]
-                                        ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$rel") }?.value
-                                    if (asset != null) {
-                                        val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
-                                        return WebResourceResponse(asset.mimeType, "UTF-8", 200, "OK", cors, ByteArrayInputStream(bytes))
-                                    }
+                                    return super.shouldInterceptRequest(view, request)
                                 }
-                                return super.shouldInterceptRequest(view, request)
+                            }
+                            if (config.sourceMode == AppSourceMode.URL && config.sourceUrl.isNotBlank()) {
+                                val u = config.sourceUrl.trim()
+                                loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
+                            } else {
+                                loadUrl("https://webforge.local/index.html")
                             }
                         }
-                        if (config.sourceMode == AppSourceMode.URL && config.sourceUrl.isNotBlank()) {
-                            val u = config.sourceUrl.trim()
-                            loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
-                        } else {
-                            loadUrl("https://webforge.local/index.html")
+                    },
+                )
+
+                // Live Ad Banner Preview Slot
+                if (config.adsEnabled && config.adPlacementBottomBanner) {
+                    Surface(
+                        color = Color(0xFF14122B),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        val activeNet = buildList {
+                            if (config.admobBannerId.isNotBlank()) add("AdMob")
+                            if (config.metaAudienceBannerId.isNotBlank()) add("Meta Ads")
+                            if (config.unityGameId.isNotBlank()) add("Unity")
+                            if (config.appLovinSdkKey.isNotBlank()) add("AppLovin")
+                            if (config.customHtmlAdScript.isNotBlank()) add("HTML Ad")
+                        }.ifEmpty { listOf("Ad Banner") }.joinToString(" • ")
+                        Text(
+                            text = "AD BANNER PREVIEW ($activeNet)",
+                            color = Color(0xFF00C6FF),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 14.dp),
+                        )
+                    }
+                }
+
+                // Live Native Bottom Nav Preview Bar
+                if (config.bottomNavBarEnabled) {
+                    Surface(color = Color(0xFF1A1638), modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            IconButton(onClick = { if (webViewRef?.canGoBack() == true) webViewRef?.goBack() }) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White)
+                            }
+                            IconButton(onClick = { webViewRef?.reload() }) {
+                                Icon(Icons.Rounded.Home, null, tint = Color.White)
+                            }
+                            IconButton(onClick = { webViewRef?.reload() }) {
+                                Icon(Icons.Rounded.Refresh, null, tint = Color.White)
+                            }
+                            IconButton(onClick = { if (webViewRef?.canGoForward() == true) webViewRef?.goForward() }) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Color.White)
+                            }
                         }
                     }
-                },
-            )
+                }
+            }
 
             if (showSplash) {
                 Box(modifier = Modifier.fillMaxSize().background(splashBg), contentAlignment = Alignment.Center) {
@@ -594,6 +696,40 @@ fun AppShellPreviewDialog(
                         Text(config.splashSubtitle.ifBlank { strings.splashPreviewLabel }, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f))
                         Spacer(Modifier.height(14.dp))
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = accentBg, strokeWidth = 2.5.dp)
+                    }
+                }
+            } else if (isLocked) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(splashBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(28.dp),
+                    ) {
+                        Icon(Icons.Rounded.Lock, null, tint = accentBg, modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = config.appLockTitle.ifBlank { config.appName },
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = lockInput,
+                            onValueChange = { lockInput = it; lockWrong = false },
+                            label = { Text(strings.appLockPasswordLabel) },
+                            singleLine = true,
+                            isError = lockWrong,
+                            shape = RoundedCornerShape(14.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = {
+                            if (lockInput == config.appLockPassword) isLocked = false else lockWrong = true
+                        }) {
+                            Text("Unlock App")
+                        }
                     }
                 }
             }
@@ -630,6 +766,12 @@ fun AppShellPreviewDialog(
     }
 }
 
+private data class BuilderPortalEntry(
+    val category: String,
+    val label: String,
+    val url: String,
+)
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun FreeWebBuilderPortalDialog(
@@ -643,18 +785,37 @@ fun FreeWebBuilderPortalDialog(
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
-    val portals = remember {
+    val categories = listOf("ALL", "ANDROID", "IOS", "HOST")
+    var selectedCategory by remember { mutableStateOf("ALL") }
+
+    val allPortals = remember {
         listOf(
-            "PWABuilder (Microsoft)" to "https://www.pwabuilder.com/",
-            "WebIntoApp (APK/iOS)" to "https://www.webintoapp.com/app-maker",
+            BuilderPortalEntry("ANDROID", "WebIntoApp (HTML/URL -> APK & iOS)", "https://www.webintoapp.com/app-maker"),
+            BuilderPortalEntry("ANDROID", "PWABuilder (Store / APK / iOS)", "https://www.pwabuilder.com/"),
+            BuilderPortalEntry("ANDROID", "AppsGeyser (Free Android APK)", "https://appsgeyser.com/"),
+            BuilderPortalEntry("IOS", "Median.co (Android & iOS IPA)", "https://median.co/"),
+            BuilderPortalEntry("IOS", "AppMySite (iOS & Android Builder)", "https://www.appmysite.com/"),
+            BuilderPortalEntry("HOST", "Tiiny.host (Upload HTML/ZIP Free)", "https://tiiny.host/"),
+            BuilderPortalEntry("HOST", "Netlify Drop (Upload HTML/ZIP)", "https://app.netlify.com/drop"),
         )
     }
-    var selectedPortalIdx by remember { mutableStateOf(0) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    val activePortalUrl = portals[selectedPortalIdx].second
+    val visiblePortals = remember(selectedCategory) {
+        if (selectedCategory == "ALL") allPortals else allPortals.filter { it.category == selectedCategory }
+    }
 
-    LaunchedEffect(activePortalUrl) {
-        webViewRef?.loadUrl(activePortalUrl)
+    var selectedPortalUrl by remember { mutableStateOf(allPortals.first().url) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var pendingFileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        pendingFileCallback?.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+        pendingFileCallback = null
+    }
+
+    LaunchedEffect(selectedPortalUrl) {
+        webViewRef?.loadUrl(selectedPortalUrl)
     }
 
     Dialog(
@@ -685,7 +846,7 @@ fun FreeWebBuilderPortalDialog(
                             IconButton(onClick = { webViewRef?.reload() }) {
                                 Icon(Icons.Rounded.Refresh, strings.reloadPreview, tint = ext.accent)
                             }
-                            IconButton(onClick = { onOpenExternal(webViewRef?.url ?: activePortalUrl) }) {
+                            IconButton(onClick = { onOpenExternal(webViewRef?.url ?: selectedPortalUrl) }) {
                                 Icon(Icons.Rounded.OpenInBrowser, strings.openUrl, tint = ext.accent)
                             }
                             IconButton(onClick = onDismiss) {
@@ -694,12 +855,38 @@ fun FreeWebBuilderPortalDialog(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        portals.forEachIndexed { idx, (label, _) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        categories.forEach { cat ->
+                            val label = when (cat) {
+                                "ANDROID" -> "Android APK/AAB"
+                                "IOS" -> "iOS / IPA"
+                                "HOST" -> if (isRtl) "استضافة HTML مجانية" else "Free HTML Host"
+                                else -> if (isRtl) "الكل" else "All"
+                            }
                             FilterChip(
-                                selected = selectedPortalIdx == idx,
-                                onClick = { selectedPortalIdx = idx },
+                                selected = selectedCategory == cat,
+                                onClick = {
+                                    selectedCategory = cat
+                                    val first = if (cat == "ALL") allPortals.first() else allPortals.first { it.category == cat }
+                                    selectedPortalUrl = first.url
+                                },
                                 label = { Text(label) },
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        visiblePortals.forEach { portal ->
+                            FilterChip(
+                                selected = selectedPortalUrl == portal.url,
+                                onClick = { selectedPortalUrl = portal.url },
+                                label = { Text(portal.label) },
                             )
                         }
                     }
@@ -752,6 +939,8 @@ fun FreeWebBuilderPortalDialog(
                             webViewRef = this
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.allowFileAccess = true
+                            settings.allowContentAccess = true
                             settings.useWideViewPort = true
                             settings.loadWithOverviewMode = true
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -764,12 +953,125 @@ fun FreeWebBuilderPortalDialog(
                                     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                                 }
                             })
-                            webChromeClient = WebChromeClient()
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onShowFileChooser(
+                                    webView: WebView?,
+                                    filePathCallback: ValueCallback<Array<Uri>>?,
+                                    fileChooserParams: FileChooserParams?,
+                                ): Boolean {
+                                    pendingFileCallback?.onReceiveValue(null)
+                                    pendingFileCallback = filePathCallback
+                                    fileChooserLauncher.launch(arrayOf("*/*"))
+                                    return true
+                                }
+                            }
                             webViewClient = WebViewClient()
-                            loadUrl(activePortalUrl)
+                            loadUrl(selectedPortalUrl)
                         }
                     },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun FreeStorePublishGuideDialog(
+    isRtl: Boolean,
+    onExportAabProject: () -> Unit,
+    onExportStorePack: () -> Unit,
+    onExportIosIpa: () -> Unit,
+    onExportIosXcodeZip: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    val ext = LocalWebForgeColors.current
+
+    Dialog(onDismissRequest = onDismiss) {
+        GlowingFrameCard(
+            modifier = Modifier.fillMaxWidth(),
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Storefront, null, tint = ext.accent)
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.freeStorePublishBtn, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, strings.close) }
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    border = BorderStroke(1.dp, ext.success.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("1. Google Play Store (.aab / APK)", fontWeight = FontWeight.Bold, color = ext.success)
+                        Text(
+                            text = if (isRtl) {
+                                "• صدّر حزمة .aab + .apk عبر الزر بالأسفل وارفعها على GitHub Actions لبناء .aab جاهز للنشر مجاناً.\n• استخدم حزمة المتجر لتجهيز الأيقونة 512px وصورة Feature Graphic 1024x500 وسياسة الخصوصية وأوصاف AI."
+                            } else {
+                                "• Export the Gradle .aab + .apk Cloud Build ZIP and let GitHub Actions compile a release-ready .aab free.\n• Generate Store Pack for 512px icon, 1024x500 feature graphic, privacy policy & AI descriptions."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        GradientButton(
+                            text = strings.exportAabProjectBtn,
+                            icon = Icons.Rounded.Android,
+                            onClick = onExportAabProject,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedGlowButton(
+                            text = strings.storePackTitle,
+                            icon = Icons.Rounded.Download,
+                            onClick = onExportStorePack,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    border = BorderStroke(1.dp, ext.accent.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("2. Apple App Store & Free iOS (.ipa / WebClip)", fontWeight = FontWeight.Bold, color = ext.accent)
+                        Text(
+                            text = if (isRtl) {
+                                "• للتثبيت المجاني بدون حساب مطور مدفوع ($99/سنة): استخدم ملف .ipa المُصدّر عبر AltStore / Sideloadly أو ملف .mobileconfig مباشرة من Safari.\n• للنشر الرسمي على App Store: صدّر مشروع Xcode + GitHub macOS .ipa Workflow ووقعّه بشهادة Apple / TestFlight."
+                            } else {
+                                "• Zero-cost iOS install (no $99/yr Apple fee): sideload the exported .ipa via AltStore / Sideloadly or install .mobileconfig directly.\n• Official App Store / TestFlight: export Xcode + GitHub macOS IPA Workflow to build & submit from the cloud."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        GradientButton(
+                            text = strings.exportIosIpaBtn,
+                            icon = Icons.Rounded.PhoneIphone,
+                            onClick = onExportIosIpa,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedGlowButton(
+                            text = if (isRtl) "تصدير Xcode + macOS IPA Workflow (.zip)" else "Export Xcode + Cloud IPA Workflow (.zip)",
+                            icon = Icons.Rounded.Share,
+                            onClick = onExportIosXcodeZip,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
         }
     }

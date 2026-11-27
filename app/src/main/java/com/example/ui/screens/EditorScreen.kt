@@ -170,13 +170,16 @@ fun EditorScreen(
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                     )
-                    val lineCount = remember(state.currentEditorCode) {
-                        var lines = 1
+                    var lineCount by remember { mutableStateOf(1) }
+                    androidx.compose.runtime.LaunchedEffect(state.currentEditorCode) {
                         val s = state.currentEditorCode
-                        for (i in 0 until s.length) {
-                            if (s[i] == '\n') lines++
+                        lineCount = withContext(Dispatchers.Default) {
+                            var lines = 1
+                            for (i in 0 until s.length) {
+                                if (s[i] == '\n') lines++
+                            }
+                            lines
                         }
-                        lines
                     }
                     Text(
                         text = "$lineCount ${strings.linesCount} • ${state.assets.size + 1} ${strings.assetsCountLabel}",

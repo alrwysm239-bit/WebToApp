@@ -3,7 +3,9 @@ package com.webforge.shell;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -22,6 +24,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.text.InputType;
+import android.text.method.HideReturnsTransformationMethod;
+import android.text.method.PasswordTransformationMethod;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -47,6 +52,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -73,10 +80,19 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE_CHOOSER = 4101;
     private static final int REQ_PERMISSIONS = 4102;
 
+    private static final String[] AD_BLOCK_HOSTS = new String[]{
+            "doubleclick.net", "googlesyndication.com", "adservice.google.",
+            "ads.facebook.com", "an.facebook.com", "taboola.com",
+            "outbrain.com", "scorecardresearch.com", "criteo.com",
+            "ads.yahoo.com", "adnxs.com", "pubmatic.com"
+    };
+
     private FrameLayout rootLayout;
+    private LinearLayout mainColumn;
     private WebView webView;
     private ProgressBar loadingBar;
     private FrameLayout splashOverlay;
+    private FrameLayout lockOverlay;
     private FrameLayout customVideoContainer;
     private View customVideoView;
     private WebChromeClient.CustomViewCallback customViewCallback;
@@ -110,6 +126,31 @@ public class MainActivity extends Activity {
     private String splashAccentColor = "#00C6FF";
     private boolean showSplashSpinner = true;
 
+    // Password Lock
+    private boolean appLockEnabled = false;
+    private String appLockPassword = "";
+    private String appLockTitle = "";
+    private boolean isAppUnlocked = true;
+
+    // Ads Monetization
+    private boolean adsEnabled = false;
+    private String admobAppId = "";
+    private String admobBannerId = "";
+    private String admobInterstitialId = "";
+    private String metaAudienceBannerId = "";
+    private String unityGameId = "";
+    private String appLovinSdkKey = "";
+    private String customHtmlAdScript = "";
+    private boolean adPlacementBottomBanner = true;
+
+    // Extra WebToApp features
+    private boolean blockAdsTrackers = false;
+    private boolean preventScreenshots = false;
+    private boolean bottomNavBarEnabled = false;
+    private boolean exitDialogEnabled = false;
+    private String deepLinkScheme = "";
+    private String aboutAppText = "";
+
     private long lastBackPressMs = 0L;
     private long createTimeMs = 0L;
     private boolean splashDismissed = false;
@@ -132,15 +173,25 @@ public class MainActivity extends Activity {
 
             int splashBgInt = safeParseColor(splashBgColor, 0xFF0C0A20);
             int accentInt = safeParseColor(splashAccentColor, 0xFF00C6FF);
+            int themeInt = safeParseColor(themeColor, 0xFF5B3DF5);
+            int navInt = safeParseColor(navBarColor, 0xFF0C0A20);
 
             rootLayout = new FrameLayout(this);
             rootLayout.setBackgroundColor(splashBgInt);
 
-            webView = new WebView(this);
-            webView.setBackgroundColor(splashBgInt);
-            webView.setLayoutParams(new FrameLayout.LayoutParams(
+            mainColumn = new LinearLayout(this);
+            mainColumn.setOrientation(LinearLayout.VERTICAL);
+            mainColumn.setLayoutParams(new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+
+            webView = new WebView(this);
+            webView.setBackgroundColor(splashBgInt);
+            webView.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
             ));
             configureWebSettings();
 
@@ -165,7 +216,20 @@ public class MainActivity extends Activity {
                 });
             }
 
-            rootLayout.addView(webView);
+            mainColumn.addView(webView);
+
+            if (bottomNavBarEnabled) {
+                mainColumn.addView(buildBottomNavBar(navInt, accentInt, themeInt));
+            }
+
+            if (adsEnabled && adPlacementBottomBanner) {
+                View adSlot = buildAdBannerContainer(accentInt, navInt);
+                if (adSlot != null) {
+                    mainColumn.addView(adSlot);
+                }
+            }
+
+            rootLayout.addView(mainColumn);
 
             loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             loadingBar.setMax(100);
@@ -190,8 +254,16 @@ public class MainActivity extends Activity {
                         ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                         Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
                 );
-                barLp.bottomMargin = dpToPx(18);
+                barLp.bottomMargin = dpToPx(bottomNavBarEnabled ? 72 : 18);
                 rootLayout.addView(floatingBar, barLp);
+            }
+
+            if (appLockEnabled && appLockPassword != null && !appLockPassword.trim().isEmpty()) {
+                isAppUnlocked = false;
+                lockOverlay = buildLockOverlay(splashBgInt, accentInt, themeInt);
+                rootLayout.addView(lockOverlay, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                ));
             }
 
             if (splashEnabled) {
@@ -218,16 +290,25 @@ public class MainActivity extends Activity {
                 }
             });
 
-            homeTargetUrl = ("url".equalsIgnoreCase(sourceMode) && startUrl != null && !startUrl.trim().isEmpty())
-                    ? normalizeUrl(startUrl.trim())
-                    : VIRTUAL_HOME_URL;
-
+            homeTargetUrl = resolveLaunchUrl(getIntent());
             webView.loadUrl(homeTargetUrl);
             requestMissingManifestPermissions();
         } catch (Throwable err) {
             Log.e(TAG, "Initialization error", err);
             showSafeFallbackError(err);
         }
+    }
+
+    private String resolveLaunchUrl(Intent intent) {
+        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
+            String raw = intent.getDataString();
+            if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) {
+                return raw;
+            }
+        }
+        return ("url".equalsIgnoreCase(sourceMode) && startUrl != null && !startUrl.trim().isEmpty())
+                ? normalizeUrl(startUrl.trim())
+                : VIRTUAL_HOME_URL;
     }
 
     private void showSafeFallbackError(Throwable err) {
@@ -295,6 +376,27 @@ public class MainActivity extends Activity {
             splashBgColor = obj.optString("splashBgColor", "#0C0A20");
             splashAccentColor = obj.optString("splashAccentColor", "#00C6FF");
             showSplashSpinner = obj.optBoolean("showSplashSpinner", true);
+
+            appLockEnabled = obj.optBoolean("appLockEnabled", false);
+            appLockPassword = obj.optString("appLockPassword", "");
+            appLockTitle = obj.optString("appLockTitle", "");
+
+            adsEnabled = obj.optBoolean("adsEnabled", false);
+            admobAppId = obj.optString("admobAppId", "");
+            admobBannerId = obj.optString("admobBannerId", "");
+            admobInterstitialId = obj.optString("admobInterstitialId", "");
+            metaAudienceBannerId = obj.optString("metaAudienceBannerId", "");
+            unityGameId = obj.optString("unityGameId", "");
+            appLovinSdkKey = obj.optString("appLovinSdkKey", "");
+            customHtmlAdScript = obj.optString("customHtmlAdScript", "");
+            adPlacementBottomBanner = obj.optBoolean("adPlacementBottomBanner", true);
+
+            blockAdsTrackers = obj.optBoolean("blockAdsTrackers", false);
+            preventScreenshots = obj.optBoolean("preventScreenshots", false);
+            bottomNavBarEnabled = obj.optBoolean("bottomNavBarEnabled", false);
+            exitDialogEnabled = obj.optBoolean("exitDialogEnabled", false);
+            deepLinkScheme = obj.optString("deepLinkScheme", "");
+            aboutAppText = obj.optString("aboutAppText", "");
         } catch (Throwable ignored) {
         }
     }
@@ -364,18 +466,32 @@ public class MainActivity extends Activity {
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 try {
                     Uri uri = request != null ? request.getUrl() : null;
-                    if (uri != null && VIRTUAL_HOST.equalsIgnoreCase(uri.getHost())) {
-                        String rawPath = uri.getPath();
-                        String rel = (rawPath == null || rawPath.isEmpty() || "/".equals(rawPath))
-                                ? "index.html"
-                                : rawPath.replaceFirst("^/+", "");
-                        if (rel.contains("..")) {
-                            return null;
-                        }
-                        WebResourceResponse resp = openAssetResponse("www/" + rel);
-                        if (resp != null) return resp;
-                        if (!rel.contains(".")) {
-                            return openAssetResponse("www/index.html");
+                    if (uri != null) {
+                        String host = uri.getHost();
+                        if (VIRTUAL_HOST.equalsIgnoreCase(host)) {
+                            String rawPath = uri.getPath();
+                            String rel = (rawPath == null || rawPath.isEmpty() || "/".equals(rawPath))
+                                    ? "index.html"
+                                    : rawPath.replaceFirst("^/+", "");
+                            if (rel.contains("..")) {
+                                return null;
+                            }
+                            WebResourceResponse resp = openAssetResponse("www/" + rel);
+                            if (resp != null) return resp;
+                            if (!rel.contains(".")) {
+                                return openAssetResponse("www/index.html");
+                            }
+                        } else if (blockAdsTrackers && host != null) {
+                            String lowerHost = host.toLowerCase(Locale.US);
+                            for (String blocked : AD_BLOCK_HOSTS) {
+                                if (lowerHost.contains(blocked)) {
+                                    return new WebResourceResponse(
+                                            "text/plain",
+                                            "UTF-8",
+                                            new ByteArrayInputStream(new byte[0])
+                                    );
+                                }
+                            }
                         }
                     }
                 } catch (Throwable ignored) {
@@ -408,6 +524,9 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 if (showProgressBar && loadingBar != null) {
                     loadingBar.setVisibility(View.GONE);
+                }
+                if (adsEnabled) {
+                    injectAdsConfigToJs();
                 }
                 if (splashEnabled && !splashDismissed) {
                     long elapsed = System.currentTimeMillis() - createTimeMs;
@@ -525,6 +644,305 @@ public class MainActivity extends Activity {
                 applyFullscreenInternal(isFullscreen);
             }
         });
+    }
+
+    private void injectAdsConfigToJs() {
+        try {
+            JSONObject ads = buildAdsJson();
+            String js = "window.WEBFORGE_ADS=" + ads.toString() + ";";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                webView.evaluateJavascript(js, null);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private JSONObject buildAdsJson() {
+        JSONObject ads = new JSONObject();
+        try {
+            ads.put("enabled", adsEnabled);
+            ads.put("admobAppId", admobAppId);
+            ads.put("admobBannerId", admobBannerId);
+            ads.put("admobInterstitialId", admobInterstitialId);
+            ads.put("metaAudienceBannerId", metaAudienceBannerId);
+            ads.put("unityGameId", unityGameId);
+            ads.put("appLovinSdkKey", appLovinSdkKey);
+        } catch (Throwable ignored) {
+        }
+        return ads;
+    }
+
+    private FrameLayout buildLockOverlay(int bgInt, int accentInt, int themeInt) {
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(bgInt);
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dpToPx(24), dpToPx(28), dpToPx(24), dpToPx(24));
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(0xFF1C1840);
+        cardBg.setCornerRadius(dpToPx(22));
+        cardBg.setStroke(dpToPx(1), themeInt);
+        card.setBackground(cardBg);
+
+        ImageView iconView = new ImageView(this);
+        try {
+            InputStream is = getAssets().open("splash_icon.png");
+            Bitmap bmp = BitmapFactory.decodeStream(is);
+            is.close();
+            if (bmp != null) iconView.setImageBitmap(bmp);
+        } catch (Throwable ignored) {
+        }
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dpToPx(64), dpToPx(64));
+        iconLp.bottomMargin = dpToPx(12);
+        card.addView(iconView, iconLp);
+
+        TextView title = new TextView(this);
+        String headerText = (appLockTitle != null && !appLockTitle.trim().isEmpty())
+                ? appLockTitle.trim()
+                : (appName + " 🔒");
+        title.setText(headerText);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(19f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        card.addView(title);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("أدخل كلمة المرور لفتح التطبيق\nEnter password to unlock");
+        subtitle.setTextColor(0xFFA8AED8);
+        subtitle.setTextSize(12.5f);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, dpToPx(6), 0, dpToPx(16));
+        card.addView(subtitle);
+
+        final EditText passField = new EditText(this);
+        passField.setHint("••••••");
+        passField.setHintTextColor(0xFF7D85B2);
+        passField.setTextColor(Color.WHITE);
+        passField.setTextSize(16f);
+        passField.setGravity(Gravity.CENTER);
+        passField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        passField.setTransformationMethod(PasswordTransformationMethod.getInstance());
+        GradientDrawable inputBg = new GradientDrawable();
+        inputBg.setColor(0xFF0C0A20);
+        inputBg.setCornerRadius(dpToPx(12));
+        inputBg.setStroke(dpToPx(1), accentInt);
+        passField.setBackground(inputBg);
+        passField.setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12));
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        inputLp.bottomMargin = dpToPx(10);
+        card.addView(passField, inputLp);
+
+        final TextView errorView = new TextView(this);
+        errorView.setTextColor(0xFFFF5C7C);
+        errorView.setTextSize(12f);
+        errorView.setGravity(Gravity.CENTER);
+        errorView.setVisibility(View.GONE);
+        card.addView(errorView);
+
+        final boolean[] shown = new boolean[]{false};
+        TextView toggleBtn = new TextView(this);
+        toggleBtn.setText("👁 إظهار / إخفاء");
+        toggleBtn.setTextColor(accentInt);
+        toggleBtn.setTextSize(12f);
+        toggleBtn.setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(12));
+        toggleBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                shown[0] = !shown[0];
+                passField.setTransformationMethod(shown[0]
+                        ? HideReturnsTransformationMethod.getInstance()
+                        : PasswordTransformationMethod.getInstance());
+                passField.setSelection(passField.getText().length());
+            }
+        });
+        card.addView(toggleBtn);
+
+        Button unlockBtn = new Button(this);
+        unlockBtn.setText("فتح التطبيق / Unlock");
+        unlockBtn.setTextColor(0xFF0C0A20);
+        unlockBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable btnBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{accentInt, 0xFF34E0A1}
+        );
+        btnBg.setCornerRadius(dpToPx(14));
+        unlockBtn.setBackground(btnBg);
+        unlockBtn.setPadding(dpToPx(18), dpToPx(12), dpToPx(18), dpToPx(12));
+        unlockBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String entered = passField.getText() != null ? passField.getText().toString() : "";
+                if (entered.equals(appLockPassword)) {
+                    isAppUnlocked = true;
+                    overlay.animate().alpha(0f).setDuration(220L).withEndAction(new Runnable() {
+                        @Override
+                        public void run() {
+                            overlay.setVisibility(View.GONE);
+                        }
+                    }).start();
+                } else {
+                    errorView.setText("كلمة المرور غير صحيحة • Incorrect password");
+                    errorView.setVisibility(View.VISIBLE);
+                }
+            }
+        });
+        card.addView(unlockBtn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
+                dpToPx(310), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER
+        );
+        overlay.addView(card, cardLp);
+        return overlay;
+    }
+
+    private LinearLayout buildBottomNavBar(int navBgInt, int accentInt, int themeInt) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(navBgInt);
+        bar.setGravity(Gravity.CENTER);
+        bar.setPadding(dpToPx(6), dpToPx(6), dpToPx(6), dpToPx(6));
+        bar.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(52)
+        ));
+
+        bar.addView(makeNavTab("⌂ الرئيسية", Color.WHITE, new View.OnClickListener() {
+            @Override public void onClick(View v) { if (webView != null) webView.loadUrl(homeTargetUrl); }
+        }));
+        bar.addView(makeNavTab("◀ رجوع", accentInt, new View.OnClickListener() {
+            @Override public void onClick(View v) { if (webView != null && webView.canGoBack()) webView.goBack(); }
+        }));
+        bar.addView(makeNavTab("↻ تحديث", accentInt, new View.OnClickListener() {
+            @Override public void onClick(View v) { if (webView != null) webView.reload(); }
+        }));
+        bar.addView(makeNavTab("↗ مشاركة", 0xFF34E0A1, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    Intent i = new Intent(Intent.ACTION_SEND);
+                    i.setType("text/plain");
+                    String currentUrl = webView != null && webView.getUrl() != null ? webView.getUrl() : homeTargetUrl;
+                    i.putExtra(Intent.EXTRA_TEXT, appName + " — " + currentUrl);
+                    startActivity(Intent.createChooser(i, appName));
+                } catch (Throwable ignored) {
+                }
+            }
+        }));
+        bar.addView(makeNavTab("ℹ حول", themeInt, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showAboutDialog();
+            }
+        }));
+        return bar;
+    }
+
+    private TextView makeNavTab(String label, int color, View.OnClickListener listener) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(color);
+        tv.setTextSize(11.5f);
+        tv.setGravity(Gravity.CENTER);
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        tv.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        tv.setOnClickListener(listener);
+        return tv;
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private View buildAdBannerContainer(int accentInt, int navBgInt) {
+        String customScript = customHtmlAdScript != null ? customHtmlAdScript.trim() : "";
+        boolean hasAnyNetworkId = (admobBannerId != null && !admobBannerId.trim().isEmpty())
+                || (metaAudienceBannerId != null && !metaAudienceBannerId.trim().isEmpty())
+                || (unityGameId != null && !unityGameId.trim().isEmpty())
+                || (appLovinSdkKey != null && !appLovinSdkKey.trim().isEmpty())
+                || (admobAppId != null && !admobAppId.trim().isEmpty());
+
+        if (customScript.isEmpty() && !hasAnyNetworkId) {
+            return null;
+        }
+
+        if (!customScript.isEmpty()) {
+            WebView adWeb = new WebView(this);
+            adWeb.setBackgroundColor(navBgInt);
+            adWeb.getSettings().setJavaScriptEnabled(true);
+            adWeb.getSettings().setDomStorageEnabled(true);
+            adWeb.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            adWeb.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(56)
+            ));
+            String adHtml = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+                    + "<style>html,body{margin:0;padding:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:transparent;overflow:hidden}</style>"
+                    + "</head><body>" + customScript + "</body></html>";
+            adWeb.loadDataWithBaseURL("https://webforge.app/", adHtml, "text/html", "utf-8", null);
+            return adWeb;
+        }
+
+        // Network status banner strip showing active configured Ad Network (AdMob / Meta / Unity / AppLovin)
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setBackgroundColor(0xFF141132);
+        strip.setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6));
+        strip.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(50)
+        ));
+
+        String networkName = "AdMob";
+        String unitId = admobBannerId;
+        if (metaAudienceBannerId != null && !metaAudienceBannerId.trim().isEmpty()) {
+            networkName = "Meta Ads";
+            unitId = metaAudienceBannerId;
+        } else if (unityGameId != null && !unityGameId.trim().isEmpty()) {
+            networkName = "Unity Ads";
+            unitId = unityGameId;
+        } else if (appLovinSdkKey != null && !appLovinSdkKey.trim().isEmpty()) {
+            networkName = "AppLovin";
+            unitId = appLovinSdkKey;
+        }
+
+        TextView badge = new TextView(this);
+        badge.setText("AD • " + networkName);
+        badge.setTextColor(0xFF0C0A20);
+        badge.setTextSize(10f);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable badgeBg = new GradientDrawable();
+        badgeBg.setColor(accentInt);
+        badgeBg.setCornerRadius(dpToPx(6));
+        badge.setBackground(badgeBg);
+        badge.setPadding(dpToPx(6), dpToPx(2), dpToPx(6), dpToPx(2));
+        strip.addView(badge);
+
+        TextView info = new TextView(this);
+        String shortId = unitId != null && unitId.length() > 24 ? unitId.substring(0, 24) + "..." : String.valueOf(unitId);
+        info.setText("  " + appName + " • " + shortId);
+        info.setTextColor(0xFFA8AED8);
+        info.setTextSize(11.5f);
+        strip.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return strip;
+    }
+
+    private void showAboutDialog() {
+        try {
+            String msg = (aboutAppText != null && !aboutAppText.trim().isEmpty())
+                    ? aboutAppText
+                    : (appName + "\n" + getPackageName());
+            new AlertDialog.Builder(this)
+                    .setTitle(appName)
+                    .setMessage(msg)
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Throwable ignored) {
+        }
     }
 
     private WebResourceResponse openAssetResponse(String assetPath) {
@@ -711,6 +1129,9 @@ public class MainActivity extends Activity {
         try {
             Window w = getWindow();
             w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            if (preventScreenshots) {
+                w.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            }
             int statusColor = safeParseColor(statusBarColor, 0xFF0C0A20);
             int navColor = safeParseColor(navBarColor, 0xFF0C0A20);
             w.setStatusBarColor(statusColor);
@@ -832,6 +1253,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (!isAppUnlocked) {
+            finish();
+            return;
+        }
         if (customVideoView != null && webView != null && webView.getWebChromeClient() != null) {
             webView.getWebChromeClient().onHideCustomView();
             return;
@@ -839,6 +1264,20 @@ public class MainActivity extends Activity {
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
             return;
+        }
+        if (exitDialogEnabled) {
+            try {
+                new AlertDialog.Builder(this)
+                        .setTitle(appName)
+                        .setMessage("هل تريد الخروج من التطبيق؟\nExit application?")
+                        .setPositiveButton("خروج / Exit", new DialogInterface.OnClickListener() {
+                            @Override public void onClick(DialogInterface dialog, int which) { finish(); }
+                        })
+                        .setNegativeButton("بقاء / Stay", null)
+                        .show();
+                return;
+            } catch (Throwable ignored) {
+            }
         }
         if ("confirm".equalsIgnoreCase(backBehavior)) {
             long now = System.currentTimeMillis();
@@ -854,6 +1293,11 @@ public class MainActivity extends Activity {
     }
 
     public class WebForgeBridge {
+        @JavascriptInterface
+        public String getAdsConfigJson() {
+            return buildAdsJson().toString();
+        }
+
         @JavascriptInterface
         public void toast(final String msg) {
             runOnUiThread(new Runnable() {

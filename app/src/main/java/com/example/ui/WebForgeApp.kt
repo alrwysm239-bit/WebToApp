@@ -447,6 +447,7 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                         onBuildDirectApk = viewModel::buildDirectApk,
                                         onExportAndroidZip = viewModel::exportAndroidWebViewProject,
                                         onExportKeystoreGuide = viewModel::exportKeystoreGuideZip,
+                                        onExportIosIpa = viewModel::exportIosIpa,
                                         onExportIosWebClip = viewModel::exportIosWebClip,
                                         onExportIosZip = viewModel::exportIosCapacitorZip,
                                         onExportElectronZip = viewModel::exportElectronDesktopZip,
@@ -549,18 +550,33 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
             if (showAiStudioSheet) {
                 GeminiAiStudioSheet(
                     initialPrompt = aiInitialPrompt,
+                    initialMobileAppMode = true,
                     currentCode = state.currentEditorCode,
                     aiTaskState = state.aiTaskState,
                     chatHistory = state.aiChatHistory,
                     isOffline = state.isEffectiveOffline,
                     isRtl = state.settings.language.isRtl,
-                    onGenerateSite = viewModel::generateSiteFromPrompt,
+                    onGenerateSite = { prompt, mobileAppMode ->
+                        viewModel.generateSiteFromPrompt(prompt, mobileAppMode)
+                    },
                     onQuickAction = viewModel::runAiQuickAction,
                     onSendChat = viewModel::sendAiChatMessage,
                     onApplyProposedCode = { code ->
                         viewModel.applyAiProposedCode(code)
                         showAiStudioSheet = false
                         navigateToTab(ROUTE_EDITOR)
+                    },
+                    onApplyAndPreview = { code ->
+                        viewModel.applyAiProposedCode(code)
+                        viewModel.reloadPreview()
+                        showAiStudioSheet = false
+                        navigateToTab(ROUTE_PREVIEW)
+                    },
+                    onApplyAndBuildApk = { code ->
+                        viewModel.applyAiProposedCode(code)
+                        showAiStudioSheet = false
+                        pendingAutoApkBuilder = true
+                        navigateToTab(ROUTE_EXPORT)
                     },
                     onDiscardTask = viewModel::discardAiTask,
                     onDismiss = { showAiStudioSheet = false },

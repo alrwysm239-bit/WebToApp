@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -86,6 +88,7 @@ fun HomeScreen(
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
+    val isRtl = state.settings.language.isRtl
     var quickPrompt by remember { mutableStateOf("") }
 
     Column(
@@ -96,7 +99,7 @@ fun HomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(modifier = Modifier.widthIn(max = 820.dp).fillMaxWidth()) {
-            // Hero Studio Card with Quick Gemini AI Site Generator
+            // Hero Studio Card with Quick Gemini AI App & Website Generator
             GlowingFrameCard(
                 modifier = Modifier.fillMaxWidth(),
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -140,7 +143,42 @@ fun HomeScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
+
+                    val homeAiChips = remember(isRtl) {
+                        if (isRtl) {
+                            listOf(
+                                "تطبيق متجر إلكتروني" to "تطبيق متجر إلكتروني بالعربية مع سلة تسوق وحفظ محلي",
+                                "تطبيق مهام" to "تطبيق مهام To-Do ذكي مع تبويبات وإحصائيات",
+                                "لعبة ذكاء" to "لعبة تفاعلية حديثة بنظام نقاط وتصميم نيون",
+                                "موقع تعريفي" to "موقع شركة أو بورتفوليو احترافي متجاوب",
+                            )
+                        } else {
+                            listOf(
+                                "Shop App" to "Interactive mobile store app with localStorage cart",
+                                "To-Do App" to "Mobile task manager app with stats & tabs",
+                                "Game" to "Neon puzzle mini-game with scoreboard",
+                                "Landing Site" to "Modern responsive landing page website",
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        homeAiChips.forEach { (label, prompt) ->
+                            FilterChip(
+                                selected = quickPrompt == prompt,
+                                onClick = {
+                                    quickPrompt = prompt
+                                    onOpenAiStudio(prompt)
+                                },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(6.dp))
 
                     OutlinedTextField(
                         value = quickPrompt,
@@ -163,7 +201,7 @@ fun HomeScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         GradientButton(
-                            text = strings.aiStudioTitle,
+                            text = if (isRtl) "صناعة تطبيق / موقع AI ✨" else strings.aiStudioTitle,
                             icon = Icons.Rounded.AutoAwesome,
                             brush = PrimaryCtaBrush,
                             onClick = { onOpenAiStudio(quickPrompt.takeIf { it.isNotBlank() }) },

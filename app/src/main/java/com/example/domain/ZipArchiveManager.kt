@@ -354,6 +354,16 @@ object ZipArchiveManager {
                     android:value="${escapeXml(config.admobAppId.trim())}" />
             """.trimIndent()
         } else ""
+        val deepLinkFilter = if (config.deepLinkScheme.isNotBlank()) {
+            """
+                <intent-filter>
+                    <action android:name="android.intent.action.VIEW" />
+                    <category android:name="android.intent.category.DEFAULT" />
+                    <category android:name="android.intent.category.BROWSABLE" />
+                    <data android:scheme="${escapeXml(config.deepLinkScheme.trim())}" />
+                </intent-filter>
+            """.trimIndent()
+        } else ""
 
         val orientationAttr = if (config.orientation.manifestValue == "unspecified") "" else
             "\n            android:screenOrientation=\"${config.orientation.manifestValue}\""
@@ -379,6 +389,7 @@ object ZipArchiveManager {
                             <action android:name="android.intent.action.MAIN" />
                             <category android:name="android.intent.category.LAUNCHER" />
                         </intent-filter>
+                        $deepLinkFilter
                     </activity>
                 </application>
             </manifest>
@@ -407,7 +418,13 @@ object ZipArchiveManager {
             </resources>
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
-        val confirmExit = config.backButtonBehavior == BackButtonBehavior.CONFIRM_EXIT
+        val confirmExit = config.backButtonBehavior == BackButtonBehavior.CONFIRM_EXIT || config.exitDialogEnabled
+        val launchTargetUrl = if (config.sourceMode == com.example.data.model.AppSourceMode.URL && config.sourceUrl.isNotBlank()) {
+            val u = config.sourceUrl.trim()
+            if (u.startsWith("http")) u else "https://$u"
+        } else {
+            "https://appassets.androidplatform.net/assets/www/index.html"
+        }
 
         files["app/src/main/java/$packagePath/MainActivity.kt"] = """
             package $packageName
@@ -415,6 +432,7 @@ object ZipArchiveManager {
             import android.annotation.SuppressLint
             import android.graphics.Color
             import android.os.Bundle
+            import android.text.InputType
             import android.view.Gravity
             import android.view.View
             import android.view.WindowManager
@@ -424,10 +442,12 @@ object ZipArchiveManager {
             import android.webkit.WebSettings
             import android.webkit.WebView
             import android.webkit.WebViewClient
+            import android.widget.EditText
             import android.widget.FrameLayout
             import android.widget.ImageView
             import android.widget.Toast
             import androidx.activity.OnBackPressedCallback
+            import androidx.appcompat.app.AlertDialog
             import androidx.appcompat.app.AppCompatActivity
             import androidx.core.view.WindowCompat
             import androidx.core.view.WindowInsetsCompat
@@ -450,6 +470,9 @@ object ZipArchiveManager {
 
                     if (${config.keepScreenOn}) {
                         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    if (${config.preventScreenshots}) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
                     if (${config.fullscreen}) {
                         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -503,12 +526,23 @@ object ZipArchiveManager {
                     root.addView(splashOverlay)
                     setContentView(root)
 
-                    webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
+                    if (${config.appLockEnabled && config.appLockPassword.isNotBlank()}) {
+                        promptUnlock("${escapeKotlinString(config.appLockPassword)}")
+                    }
+
+                    webView.loadUrl("${escapeKotlinString(launchTargetUrl)}")
 
                     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
                         override fun handleOnBackPressed() {
                             if (webView.canGoBack()) {
                                 webView.goBack()
+                            } else if (${config.exitDialogEnabled}) {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("${escapeKotlinString(safeAppName)}")
+                                    .setMessage("Exit application?")
+                                    .setPositiveButton("Exit") { _, _ -> finish() }
+                                    .setNegativeButton("Stay", null)
+                                    .show()
                             } else if ($confirmExit) {
                                 val now = System.currentTimeMillis()
                                 if (now - lastBackPressMs < 2000L) {
@@ -525,6 +559,21 @@ object ZipArchiveManager {
                         }
                     })
                 }
+
+                private fun promptUnlock(expected: String) {
+                    val input = EditText(this).apply {
+                        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle("${escapeKotlinString(safeAppName)}")
+                        .setMessage("Enter password to unlock")
+                        .setView(input)
+                        .setCancelable(false)
+                        .setPositiveButton("Unlock") { _, _ ->
+                            if (input.text?.toString() != expected) promptUnlock(expected)
+                        }
+                        .show()
+                }
             }
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
@@ -535,15 +584,18 @@ object ZipArchiveManager {
             files["app/src/main/res/mipmap-$d/ic_launcher_round.png"] = png
         }
 
-        files["app/src/main/assets/www/index.html"] = finalHtml.toByteArray(Charsets.UTF_8)
+        val wwwHtml = if (config.adsEnabled && config.customHtmlAdScript.isNotBlank()) {
+            com.example.domain.apk.OnDeviceApkBuilder.injectIosRuntimeShellHtml(finalHtml, safeAppName, config)
+        } else finalHtml
+        files["app/src/main/assets/www/index.html"] = wwwHtml.toByteArray(Charsets.UTF_8)
         files["app/src/main/assets/www/favicon.png"] = resizePng(iconSource, 64)
         assets.forEach { asset ->
             assetToBytes(asset)?.let { files["app/src/main/assets/www/${asset.path}"] = it }
         }
 
-        // GitHub Actions building BOTH APK and AAB automatically
+        // GitHub Actions building BOTH APK and Google Play AAB automatically
         files[".github/workflows/build-apk.yml"] = """
-            name: Build Android APK & AAB
+            name: Build Android APK & Play Store AAB
             on:
               push:
                 branches: [ main, master ]
@@ -570,9 +622,10 @@ object ZipArchiveManager {
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
         files["README.md"] = """
-            # $safeAppName — Android APK & AAB Project
+            # $safeAppName — Android APK & Google Play AAB Project
             Generated by **WebForge Studio**.
-            - Open in Android Studio or push to GitHub to trigger `.github/workflows/build-apk.yml` for automatic **APK + AAB** artifacts.
+            - Push to GitHub to trigger `.github/workflows/build-apk.yml` for automatic **Google Play `.aab`** + **`.apk`** builds!
+            - Ads Config: AdMob=${config.admobAppId}, Meta=${config.metaAudienceBannerId}, Unity=${config.unityGameId}, AppLovin=${config.appLovinSdkKey}
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
         return zipFileMap(files)

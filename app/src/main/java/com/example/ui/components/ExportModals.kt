@@ -32,11 +32,14 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -409,6 +412,7 @@ fun AndroidConfigSheet(
     onExportAndroidProject: (saveToDevice: Boolean) -> Unit,
     onExportKeystoreGuide: (saveToDevice: Boolean) -> Unit,
     onPreviewAppShell: () -> Unit,
+    onOpenStoreGuide: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -654,9 +658,12 @@ fun AndroidConfigSheet(
                 FilterChip(config.orientation == AppOrientation.LANDSCAPE, { onConfigChange { it.copy(orientation = AppOrientation.LANDSCAPE) } }, { Text(strings.orientationLandscape) })
             }
 
-            // Rich Native Behavior Toggles
+            // Rich Native WebToApp Behavior Toggles
             ToggleLine(if (isRtl) "وضع ملء الشاشة (Fullscreen)" else "Fullscreen Immersive Mode", config.fullscreen) {
                 onConfigChange { c -> c.copy(fullscreen = it) }
+            }
+            ToggleLine(strings.bottomNavBarLabel, config.bottomNavBarEnabled) {
+                onConfigChange { c -> c.copy(bottomNavBarEnabled = it) }
             }
             ToggleLine(strings.showFloatingBarLabel, config.showFloatingBar) {
                 onConfigChange { c -> c.copy(showFloatingBar = it) }
@@ -678,6 +685,143 @@ fun AndroidConfigSheet(
             }
             ToggleLine(strings.openExternalLinksLabel, config.openExternalLinksInBrowser) {
                 onConfigChange { c -> c.copy(openExternalLinksInBrowser = it) }
+            }
+            ToggleLine(strings.blockAdsTrackersLabel, config.blockAdsTrackers) {
+                onConfigChange { c -> c.copy(blockAdsTrackers = it) }
+            }
+            ToggleLine(strings.preventScreenshotsLabel, config.preventScreenshots) {
+                onConfigChange { c -> c.copy(preventScreenshots = it) }
+            }
+            ToggleLine(strings.exitDialogLabel, config.exitDialogEnabled) {
+                onConfigChange { c -> c.copy(exitDialogEnabled = it) }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // App Launch Password Lock Card
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(1.dp, ext.cardBorder),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Lock, null, tint = ext.accent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.appLockSectionTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ext.accent)
+                    }
+                    ToggleLine(strings.appLockEnabledLabel, config.appLockEnabled) {
+                        onConfigChange { c -> c.copy(appLockEnabled = it) }
+                    }
+                    AnimatedVisibility(visible = config.appLockEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = config.appLockTitle,
+                                onValueChange = { v -> onConfigChange { it.copy(appLockTitle = v) } },
+                                label = { Text(strings.appLockTitleLabel) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = config.appLockPassword,
+                                onValueChange = { v -> onConfigChange { it.copy(appLockPassword = v) } },
+                                label = { Text(strings.appLockPasswordLabel) },
+                                visualTransformation = PasswordVisualTransformation(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("app_lock_password_input"),
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Multi-Network In-App Ads Monetization Card (Android & iOS)
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(1.dp, ext.cardBorder),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.MonetizationOn, null, tint = ext.success, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.adsSectionTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ext.success)
+                    }
+                    ToggleLine(strings.adsEnabledLabel, config.adsEnabled) {
+                        onConfigChange { c -> c.copy(adsEnabled = it) }
+                    }
+                    AnimatedVisibility(visible = config.adsEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToggleLine(if (isRtl) "إظهار بانر الإعلان بالأسفل" else "Show Bottom Ad Banner", config.adPlacementBottomBanner) {
+                                onConfigChange { c -> c.copy(adPlacementBottomBanner = it) }
+                            }
+                            OutlinedTextField(
+                                value = config.admobAppId,
+                                onValueChange = { v -> onConfigChange { it.copy(admobAppId = v) } },
+                                label = { Text("AdMob App ID (ca-app-pub-...)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = config.admobBannerId,
+                                onValueChange = { v -> onConfigChange { it.copy(admobBannerId = v) } },
+                                label = { Text("AdMob Banner ID") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = config.admobInterstitialId,
+                                onValueChange = { v -> onConfigChange { it.copy(admobInterstitialId = v) } },
+                                label = { Text("AdMob Interstitial ID") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = config.metaAudienceBannerId,
+                                onValueChange = { v -> onConfigChange { it.copy(metaAudienceBannerId = v) } },
+                                label = { Text("Meta / Facebook Audience Placement ID") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = config.unityGameId,
+                                    onValueChange = { v -> onConfigChange { it.copy(unityGameId = v) } },
+                                    label = { Text("Unity Game ID") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f),
+                                )
+                                OutlinedTextField(
+                                    value = config.appLovinSdkKey,
+                                    onValueChange = { v -> onConfigChange { it.copy(appLovinSdkKey = v) } },
+                                    label = { Text("AppLovin Key") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            OutlinedTextField(
+                                value = config.customHtmlAdScript,
+                                onValueChange = { v -> onConfigChange { it.copy(customHtmlAdScript = v) } },
+                                label = { Text(if (isRtl) "كود إعلانات HTML/JS (AdSense / Adsterra / Monetag)" else "Custom HTML/JS Ad Script (AdSense/Adsterra)") },
+                                maxLines = 3,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -754,16 +898,47 @@ fun AndroidConfigSheet(
                 )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+            GradientButton(
+                text = strings.exportAabProjectBtn,
+                icon = Icons.Rounded.Android,
+                onClick = { onExportAndroidProject(true) },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "export_aab_project_button",
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            TextButton(onClick = onOpenStoreGuide, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Storefront, null, Modifier.size(16.dp), tint = ext.accent)
+                Spacer(Modifier.width(6.dp))
+                Text(strings.freeStorePublishBtn, color = ext.accent)
+            }
+
             // Collapsible Advanced / Source Export Options
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             TextButton(onClick = { showAdvancedDeveloper = !showAdvancedDeveloper }) {
                 Icon(if (showAdvancedDeveloper) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, Modifier.size(18.dp), tint = ext.accent)
                 Spacer(Modifier.width(6.dp))
-                Text(if (isRtl) "خيارات متقدمة ومشروع المطورين (Source ZIP / TWA)" else "Advanced Options & Source ZIP", color = ext.accent)
+                Text(if (isRtl) "خيارات متقدمة (Deep Link / TWA / User-Agent / About)" else "Advanced Options (Deep Link / TWA / User-Agent)", color = ext.accent)
             }
 
             AnimatedVisibility(visible = showAdvancedDeveloper) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = config.deepLinkScheme,
+                        onValueChange = { v -> onConfigChange { it.copy(deepLinkScheme = v) } },
+                        label = { Text("Deep Link Scheme (e.g. myapp)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = config.aboutAppText,
+                        onValueChange = { v -> onConfigChange { it.copy(aboutAppText = v) } },
+                        label = { Text(if (isRtl) "نص نافذة حول التطبيق (About)" else "About App Dialog Text") },
+                        maxLines = 2,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     OutlinedTextField(
                         value = config.customUserAgent,
                         onValueChange = { v -> onConfigChange { it.copy(customUserAgent = v) } },
@@ -787,21 +962,6 @@ fun AndroidConfigSheet(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = config.admobAppId,
-                        onValueChange = { v -> onConfigChange { it.copy(admobAppId = v) } },
-                        label = { Text("AdMob App ID (Optional ca-app-pub-...)") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedGlowButton(
-                        text = strings.exportAndroidProjectZip,
-                        icon = Icons.Rounded.Android,
-                        onClick = { onExportAndroidProject(true) },
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "export_android_zip_button",
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedGlowButton(

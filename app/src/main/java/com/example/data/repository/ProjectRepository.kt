@@ -200,12 +200,26 @@ class ProjectRepository(private val dao: ProjectDao) {
         put("packageName", config.packageName)
         put("versionName", config.versionName)
         put("versionCode", config.versionCode)
+        put("sourceMode", config.sourceMode.key)
+        put("sourceUrl", config.sourceUrl)
         put("themeColorHex", config.themeColorHex)
         put("statusBarColorHex", config.statusBarColorHex)
+        put("navBarColorHex", config.navBarColorHex)
         put("orientation", config.orientation.key)
         put("fullscreen", config.fullscreen)
         put("pullToRefresh", config.pullToRefresh)
         put("keepScreenOn", config.keepScreenOn)
+        put("enableZoom", config.enableZoom)
+        put("desktopMode", config.desktopMode)
+        put("showProgressBar", config.showProgressBar)
+        put("showFloatingBar", config.showFloatingBar)
+        put("openExternalLinksInBrowser", config.openExternalLinksInBrowser)
+        put("customUserAgent", config.customUserAgent)
+        put("splashEnabled", config.splashEnabled)
+        put("splashDurationMs", config.splashDurationMs)
+        put("splashTitle", config.splashTitle)
+        put("splashSubtitle", config.splashSubtitle)
+        put("splashBgColorHex", config.splashBgColorHex)
         put("backButtonBehavior", config.backButtonBehavior.key)
         put("permissions", JSONArray(config.permissions.toList()))
         if (config.customIconBase64 != null) put("customIconBase64", config.customIconBase64)
@@ -214,6 +228,23 @@ class ProjectRepository(private val dao: ProjectDao) {
         put("twaHost", config.twaHost)
         put("twaSha256", config.twaSha256)
         put("admobAppId", config.admobAppId)
+        put("appLockEnabled", config.appLockEnabled)
+        put("appLockPassword", config.appLockPassword)
+        put("appLockTitle", config.appLockTitle)
+        put("adsEnabled", config.adsEnabled)
+        put("admobBannerId", config.admobBannerId)
+        put("admobInterstitialId", config.admobInterstitialId)
+        put("metaAudienceBannerId", config.metaAudienceBannerId)
+        put("unityGameId", config.unityGameId)
+        put("appLovinSdkKey", config.appLovinSdkKey)
+        put("customHtmlAdScript", config.customHtmlAdScript)
+        put("adPlacementBottomBanner", config.adPlacementBottomBanner)
+        put("blockAdsTrackers", config.blockAdsTrackers)
+        put("preventScreenshots", config.preventScreenshots)
+        put("bottomNavBarEnabled", config.bottomNavBarEnabled)
+        put("exitDialogEnabled", config.exitDialogEnabled)
+        put("deepLinkScheme", config.deepLinkScheme)
+        put("aboutAppText", config.aboutAppText)
     }.toString()
 
     private fun decodeConfig(json: String, fallbackName: String): AppExportConfig {
@@ -233,12 +264,26 @@ class ProjectRepository(private val dao: ProjectDao) {
                 packageName = obj.optString("packageName", "com.webforge.app"),
                 versionName = obj.optString("versionName", "1.0.0"),
                 versionCode = obj.optInt("versionCode", 1),
+                sourceMode = com.example.data.model.AppSourceMode.fromKey(obj.optString("sourceMode")),
+                sourceUrl = obj.optString("sourceUrl", ""),
                 themeColorHex = obj.optString("themeColorHex", "#5B3DF5"),
                 statusBarColorHex = obj.optString("statusBarColorHex", "#0C0A20"),
+                navBarColorHex = obj.optString("navBarColorHex", "#0C0A20"),
                 orientation = AppOrientation.fromKey(obj.optString("orientation")),
                 fullscreen = obj.optBoolean("fullscreen", false),
                 pullToRefresh = obj.optBoolean("pullToRefresh", true),
                 keepScreenOn = obj.optBoolean("keepScreenOn", false),
+                enableZoom = obj.optBoolean("enableZoom", false),
+                desktopMode = obj.optBoolean("desktopMode", false),
+                showProgressBar = obj.optBoolean("showProgressBar", true),
+                showFloatingBar = obj.optBoolean("showFloatingBar", false),
+                openExternalLinksInBrowser = obj.optBoolean("openExternalLinksInBrowser", false),
+                customUserAgent = obj.optString("customUserAgent", ""),
+                splashEnabled = obj.optBoolean("splashEnabled", true),
+                splashDurationMs = obj.optInt("splashDurationMs", 1600),
+                splashTitle = obj.optString("splashTitle", ""),
+                splashSubtitle = obj.optString("splashSubtitle", ""),
+                splashBgColorHex = obj.optString("splashBgColorHex", "#0C0A20"),
                 backButtonBehavior = BackButtonBehavior.fromKey(obj.optString("backButtonBehavior")),
                 permissions = perms,
                 customIconBase64 = if (obj.has("customIconBase64")) obj.getString("customIconBase64") else null,
@@ -247,6 +292,23 @@ class ProjectRepository(private val dao: ProjectDao) {
                 twaHost = obj.optString("twaHost", ""),
                 twaSha256 = obj.optString("twaSha256", ""),
                 admobAppId = obj.optString("admobAppId", ""),
+                appLockEnabled = obj.optBoolean("appLockEnabled", false),
+                appLockPassword = obj.optString("appLockPassword", ""),
+                appLockTitle = obj.optString("appLockTitle", ""),
+                adsEnabled = obj.optBoolean("adsEnabled", false),
+                admobBannerId = obj.optString("admobBannerId", ""),
+                admobInterstitialId = obj.optString("admobInterstitialId", ""),
+                metaAudienceBannerId = obj.optString("metaAudienceBannerId", ""),
+                unityGameId = obj.optString("unityGameId", ""),
+                appLovinSdkKey = obj.optString("appLovinSdkKey", ""),
+                customHtmlAdScript = obj.optString("customHtmlAdScript", ""),
+                adPlacementBottomBanner = obj.optBoolean("adPlacementBottomBanner", true),
+                blockAdsTrackers = obj.optBoolean("blockAdsTrackers", false),
+                preventScreenshots = obj.optBoolean("preventScreenshots", false),
+                bottomNavBarEnabled = obj.optBoolean("bottomNavBarEnabled", false),
+                exitDialogEnabled = obj.optBoolean("exitDialogEnabled", false),
+                deepLinkScheme = obj.optString("deepLinkScheme", ""),
+                aboutAppText = obj.optString("aboutAppText", ""),
             )
         }.getOrDefault(AppExportConfig(appName = fallbackName))
     }

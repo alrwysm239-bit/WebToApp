@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
@@ -29,6 +30,9 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.DriveFileRenameOutline
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -473,22 +477,52 @@ fun UrlGithubImportDialog(
 @Composable
 fun GeminiAiStudioSheet(
     initialPrompt: String?,
+    initialMobileAppMode: Boolean = true,
     currentCode: String,
     aiTaskState: AiTaskState,
     chatHistory: List<AiChatMessage>,
     isOffline: Boolean,
     isRtl: Boolean,
-    onGenerateSite: (String) -> Unit,
+    onGenerateSite: (prompt: String, mobileAppMode: Boolean) -> Unit,
     onQuickAction: (AiQuickAction) -> Unit,
     onSendChat: (String) -> Unit,
     onApplyProposedCode: (String) -> Unit,
+    onApplyAndPreview: (String) -> Unit,
+    onApplyAndBuildApk: (String) -> Unit,
     onDiscardTask: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
     var sitePrompt by remember(initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
+    var isMobileAppMode by remember(initialMobileAppMode) { mutableStateOf(initialMobileAppMode) }
     var chatInput by remember { mutableStateOf("") }
+
+    val ideaPresets = remember(isRtl) {
+        if (isRtl) {
+            listOf(
+                "متجر إلكتروني" to "تطبيق متجر إلكتروني متكامل بالعربية مع أقسام المنتجات، سلة تسوق تحفظ محلياً، البحث، وإتمام الطلب",
+                "تطبيق مهام To-Do" to "تطبيق إدارة المهام اليومية والأولويات مع فئات وإحصائيات إنجاز وحفظ تلقائي localStorage",
+                "آلة حاسبة علمية" to "تطبيق آلة حاسبة علمية حديثة مع سجل العمليات الحسابية ووضع داكن وأزرار سلسة",
+                "لعبة ذكاء X-O" to "لعبة إكس أو وتحدي الذاكرة بتصميم نيون جذاب مع نظام نقاط ومؤثرات صوتية برمجية",
+                "تطبيق اختبارات Quiz" to "تطبيق اختبارات ثقافية وبرمجية تفاعلي مع مؤقت عد تنازلي وحساب النتيجة والرتبة",
+                "قائمة مطعم + واتساب" to "تطبيق منيو مطعم وكافيه فاخر مع سلة طلبات وإرسال الفاتورة مباشرة عبر واتساب",
+                "محفظة أعمال" to "موقع بورتفوليو شخصي احترافي مع معرض مشاريع ونموذج تواصل وإحصائيات",
+                "لوحة تحكم SaaS" to "لوحة تحكم تحليلات ومبيعات تفاعلية مع رسوم بيانية SVG وجداول ومقاييس أداء",
+            )
+        } else {
+            listOf(
+                "E-Commerce App" to "Complete mobile e-commerce app with product catalog, search, localStorage cart, and checkout modal",
+                "Task Manager" to "Interactive To-Do & habit tracker mobile app with tabs, priority filters, stats, and localStorage sync",
+                "Calculator App" to "Sleek scientific calculator mobile app with calculation history drawer and haptic-style visual feedback",
+                "Puzzle Game" to "Modern neon Tic-Tac-Toe & Memory Match mini-game app with scoreboard and difficulty modes",
+                "Quiz Challenge" to "Interactive trivia quiz app with countdown timer, progress bar, and score breakdown",
+                "Restaurant Menu" to "Digital restaurant menu app with food categories, cart drawer, and WhatsApp order summary",
+                "Portfolio Site" to "Modern responsive developer portfolio website with animated hero, project gallery, and contact form",
+                "SaaS Dashboard" to "Interactive analytics dashboard web-app with SVG charts, KPI cards, and dark/light toggle",
+            )
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -504,7 +538,18 @@ fun GeminiAiStudioSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.AutoAwesome, null, tint = ext.accent)
                 Spacer(Modifier.width(8.dp))
-                Text(strings.aiStudioTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isRtl) "استوديو Gemini لصناعة تطبيقات ومواقع HTML" else strings.aiStudioTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = if (isRtl) "اكتب فكرتك وسيبني Gemini كود HTML5 تفاعلي جاهز للمعاينة والتحويل إلى APK أو موقع" else "Describe your app or site — Gemini builds live interactive HTML5 ready for preview or APK",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
 
@@ -513,21 +558,61 @@ fun GeminiAiStudioSheet(
                 Spacer(Modifier.height(8.dp))
             }
 
-            // Prompt-to-Site Generator
+            // Build Mode Selector: Interactive HTML5 App vs Responsive Website
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = isMobileAppMode,
+                    onClick = { isMobileAppMode = true },
+                    leadingIcon = { Icon(Icons.Rounded.PhoneAndroid, null, modifier = Modifier.size(16.dp)) },
+                    label = { Text(if (isRtl) "تطبيق جوال HTML5" else "Mobile HTML5 App") },
+                    modifier = Modifier.testTag("ai_mode_app_chip"),
+                )
+                FilterChip(
+                    selected = !isMobileAppMode,
+                    onClick = { isMobileAppMode = false },
+                    leadingIcon = { Icon(Icons.Rounded.Language, null, modifier = Modifier.size(16.dp)) },
+                    label = { Text(if (isRtl) "موقع ويب متكامل" else "Responsive Website") },
+                    modifier = Modifier.testTag("ai_mode_website_chip"),
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            // 1-Tap Prompt Presets
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ideaPresets.forEach { (title, fullPrompt) ->
+                    FilterChip(
+                        selected = sitePrompt == fullPrompt,
+                        onClick = { sitePrompt = fullPrompt },
+                        label = { Text(title) },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Prompt-to-App / Website Generator
             OutlinedTextField(
                 value = sitePrompt,
                 onValueChange = { sitePrompt = it },
                 label = { Text(strings.aiGenerateHint) },
-                maxLines = 3,
+                maxLines = 4,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().testTag("ai_site_prompt_input"),
             )
             Spacer(Modifier.height(8.dp))
             GradientButton(
-                text = if (isRtl) "توليد موقع بالذكاء الاصطناعي ✨" else "Generate Site with Gemini ✨",
+                text = if (isRtl) {
+                    if (isMobileAppMode) "صناعة التطبيق الآن بذكاء Gemini ✨" else "إنشاء الموقع الآن بذكاء Gemini ✨"
+                } else {
+                    if (isMobileAppMode) "Build HTML5 App with Gemini ✨" else "Build Website with Gemini ✨"
+                },
                 icon = Icons.Rounded.AutoAwesome,
                 enabled = !isOffline && sitePrompt.isNotBlank() && aiTaskState !is AiTaskState.Loading,
-                onClick = { onGenerateSite(sitePrompt) },
+                onClick = { onGenerateSite(sitePrompt, isMobileAppMode) },
                 modifier = Modifier.fillMaxWidth(),
                 testTag = "ai_generate_site_button",
             )
@@ -566,7 +651,7 @@ fun GeminiAiStudioSheet(
 
             Spacer(Modifier.height(12.dp))
 
-            // AI Task Output & Line-by-Line Diff Preview
+            // AI Task Output & Instant Preview / APK Pipeline
             when (aiTaskState) {
                 AiTaskState.Idle -> Unit
                 AiTaskState.Loading -> {
@@ -577,7 +662,7 @@ fun GeminiAiStudioSheet(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(22.dp), color = ext.accent)
                         Spacer(Modifier.width(10.dp))
-                        Text("Gemini...")
+                        Text(if (isRtl) "Gemini يقوم بكتابة التطبيق..." else "Gemini is coding...")
                     }
                 }
                 is AiTaskState.Streaming -> {
@@ -589,7 +674,7 @@ fun GeminiAiStudioSheet(
                             modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp),
                         ) {
                             Text(
-                                text = aiTaskState.text.takeLast(1600),
+                                text = aiTaskState.text.takeLast(1800),
                                 style = TextStyle(fontFamily = MonoFontFamily, fontSize = 11.sp, color = ext.accent),
                                 modifier = Modifier.verticalScroll(rememberScrollState()).padding(10.dp),
                             )
@@ -619,12 +704,28 @@ fun GeminiAiStudioSheet(
                                 Spacer(Modifier.height(8.dp))
                                 DiffPreviewBox(oldCode = currentCode, newCode = proposed)
                                 Spacer(Modifier.height(10.dp))
+                                GradientButton(
+                                    text = if (isRtl) "تشغيل ومعاينة التطبيق فوراً ▶" else "Apply & Live Preview ▶",
+                                    icon = Icons.Rounded.PlayArrow,
+                                    brush = MintCtaBrush,
+                                    contentColor = Color(0xFF0C0A20),
+                                    onClick = { onApplyAndPreview(proposed) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    testTag = "ai_apply_preview_button",
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                GradientButton(
+                                    text = if (isRtl) "اعتماد وتحويل إلى تطبيق أندرويد APK" else "Apply & Build Android APK",
+                                    icon = Icons.Rounded.Android,
+                                    onClick = { onApplyAndBuildApk(proposed) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    testTag = "ai_apply_apk_button",
+                                )
+                                Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    GradientButton(
+                                    OutlinedGlowButton(
                                         text = strings.aiApplyDiff,
                                         icon = Icons.Rounded.Check,
-                                        brush = MintCtaBrush,
-                                        contentColor = Color(0xFF0C0A20),
                                         onClick = { onApplyProposedCode(proposed) },
                                         modifier = Modifier.weight(1f),
                                         testTag = "ai_apply_diff_button",
@@ -657,8 +758,13 @@ fun GeminiAiStudioSheet(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             if (msg.proposedCode != null && !msg.isApplied) {
-                                TextButton(onClick = { onApplyProposedCode(msg.proposedCode) }) {
-                                    Text(strings.aiApplyDiff, color = ext.success)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = { onApplyAndPreview(msg.proposedCode) }) {
+                                        Text(if (isRtl) "معاينة ▶" else "Preview ▶", color = ext.success)
+                                    }
+                                    TextButton(onClick = { onApplyProposedCode(msg.proposedCode) }) {
+                                        Text(strings.aiApplyDiff, color = ext.accent)
+                                    }
                                 }
                             }
                         }
@@ -671,7 +777,7 @@ fun GeminiAiStudioSheet(
                 OutlinedTextField(
                     value = chatInput,
                     onValueChange = { chatInput = it },
-                    label = { Text(if (isRtl) "اطلب تعديلاً أو اسأل Gemini..." else "Ask Gemini or request an edit...") },
+                    label = { Text(if (isRtl) "اطلب ميزة جديدة أو تعديلاً من Gemini..." else "Ask Gemini or request a new feature...") },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.weight(1f),
