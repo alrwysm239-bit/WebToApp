@@ -1,0 +1,6 @@
+{
+  "name": "WebForge – ويب فورج",
+  "description": "تطبيق احترافي لتحويل ملفات وكود HTML إلى موقع إلكتروني قابل للنشر وتطبيق PWA و Android WebView مع معاينة حية ومحرر ملوّن.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
