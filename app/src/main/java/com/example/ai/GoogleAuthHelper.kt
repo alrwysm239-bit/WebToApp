@@ -9,7 +9,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -19,6 +18,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
@@ -34,10 +34,22 @@ object GoogleAuthHelper {
     const val BOOTSTRAPPED_ADMIN_EMAIL = "alrwysm239@gmail.com"
     private const val TAG = "Auth"
 
+    private fun webClientId(context: Context): String {
+        val id = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        if (id == 0) {
+            throw IllegalStateException("إعداد تسجيل الدخول بحساب Google غير متوفر (default_web_client_id غير موجود).")
+        }
+        return context.getString(id).also {
+            if (it.isBlank()) throw IllegalStateException("قيمة default_web_client_id فارغة.")
+        }
+    }
+
     fun isBootstrappedAdmin(user: FirebaseUser?): Boolean {
         if (user == null) return false
-        return user.isEmailVerified &&
-            user.email?.trim()?.equals(BOOTSTRAPPED_ADMIN_EMAIL, ignoreCase = true) == true
+        return runCatching {
+            user.isEmailVerified &&
+                user.email?.trim()?.equals(BOOTSTRAPPED_ADMIN_EMAIL, ignoreCase = true) == true
+        }.getOrDefault(false)
     }
 
     fun currentUserOrNull(): FirebaseUser? = runCatching { Firebase.auth.currentUser }.getOrNull()
@@ -49,10 +61,18 @@ object GoogleAuthHelper {
             return@callbackFlow
         }
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            trySend(firebaseAuth.currentUser)
+            trySend(runCatching { firebaseAuth.currentUser }.getOrNull())
         }
-        auth.addAuthStateListener(listener)
-        awaitClose { auth.removeAuthStateListener(listener) }
+        try {
+            auth.addAuthStateListener(listener)
+        } catch (_: Throwable) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+        awaitClose {
+            runCatching { auth.removeAuthStateListener(listener) }
+        }
     }
 
     private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -63,18 +83,23 @@ object GoogleAuthHelper {
 
     fun attemptAutoSignIn(
         context: Context,
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         onAuthSuccess: () -> Unit,
         onUnauthenticated: () -> Unit,
         scope: CoroutineScope,
     ) {
-        if (Firebase.auth.currentUser != null) {
+        if (currentUserOrNull() != null) {
             onAuthSuccess()
             return
         }
+        val auth = runCatching { Firebase.auth }.getOrNull()
+        if (credentialManager == null || auth == null) {
+            onUnauthenticated()
+            return
+        }
         val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
+            webClientId(context)
+        } catch (_: Throwable) {
             onUnauthenticated()
             return
         }
@@ -92,12 +117,14 @@ object GoogleAuthHelper {
                 val cred = credentialManager.getCredential(activity, request).credential
                 if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                     val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                    Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                    auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
                     onAuthSuccess()
                 } else {
                     onUnauthenticated()
                 }
-            } catch (_: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
                 onUnauthenticated()
             }
         }
@@ -105,16 +132,25 @@ object GoogleAuthHelper {
 
     fun onGoogleSignInClicked(
         context: Context,
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         onAuthSuccess: () -> Unit,
         onAuthError: (String) -> Unit,
         scope: CoroutineScope,
         onAuthCancelled: () -> Unit = {},
     ) {
+        val auth = runCatching { Firebase.auth }.getOrNull()
+        if (auth == null) {
+            onAuthError("خدمة Firebase غير مهيأة في هذه النسخة. يعمل الذكاء الاصطناعي عبر الخادم الوسيط تلقائياً بدون تسجيل دخول.")
+            return
+        }
+        if (credentialManager == null) {
+            onAuthError("مدير تسجيل الدخول غير متوفر على هذا الجهاز.")
+            return
+        }
         val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
-            onAuthError("إعداد تسجيل الدخول بحساب Google غير مكتمل (default_web_client_id).")
+            webClientId(context)
+        } catch (e: Throwable) {
+            onAuthError(e.localizedMessage ?: "إعداد تسجيل الدخول بحساب Google غير مكتمل.")
             return
         }
         val activity = context.findActivity()
@@ -131,15 +167,17 @@ object GoogleAuthHelper {
                 val cred = credentialManager.getCredential(activity, request).credential
                 if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                     val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                    Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                    auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
                     onAuthSuccess()
                 } else {
                     onAuthError("نوع بيانات الاعتماد غير متوقع.")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: GetCredentialCancellationException) {
                 Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
                 onAuthCancelled()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Google Sign-In failed", e)
                 onAuthError(e.localizedMessage ?: "فشل تسجيل الدخول بحساب Google.")
             }
@@ -147,18 +185,18 @@ object GoogleAuthHelper {
     }
 
     fun signOut(
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         scope: CoroutineScope,
         onSignOutComplete: () -> Unit = {},
     ) {
         scope.launch {
             withContext(NonCancellable) {
                 try {
-                    credentialManager.clearCredentialState(ClearCredentialStateRequest())
-                } catch (e: Exception) {
+                    credentialManager?.clearCredentialState(ClearCredentialStateRequest())
+                } catch (e: Throwable) {
                     Log.w(TAG, "Failed to clear credential state: ${e.message}")
                 } finally {
-                    Firebase.auth.signOut()
+                    runCatching { Firebase.auth.signOut() }
                     onSignOutComplete()
                 }
             }

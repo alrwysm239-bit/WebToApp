@@ -90,7 +90,9 @@ fun AdminControlPanelDialog(
     val clipboard = LocalClipboardManager.current
     val ext = LocalWebForgeColors.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) {
+        runCatching { CredentialManager.create(context) }.getOrNull()
+    }
     val adminRepo = remember(context) { AdminConfigRepository(context.applicationContext) }
 
     val authUser by remember { GoogleAuthHelper.authStateFlow() }
@@ -216,7 +218,10 @@ fun AdminControlPanelDialog(
                                                 authError = msg
                                             },
                                             scope = scope,
-                                            onAuthCancelled = { authBusy = false },
+                                            onAuthCancelled = {
+                                                authBusy = false
+                                                authError = "لم يكتمل تسجيل الدخول. إذا اخترت الحساب ثم رجعت الشاشة، فغالباً بصمة SHA-1 غير مضافة في Firebase."
+                                            },
                                         )
                                     },
                                     enabled = !authBusy,
