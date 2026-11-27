@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PhoneIphone
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Icon
@@ -69,6 +70,9 @@ import com.example.ui.theme.WebForgeWarning
 @Composable
 fun ExportScreen(
     state: WebForgeUiState,
+    autoOpenFreeDeploy: Boolean = false,
+    onConsumeAutoOpenFreeDeploy: () -> Unit = {},
+    onPublishFreeNow: () -> Unit = {},
     onExportWebsiteZip: (includePwa: Boolean, saveToDevice: Boolean) -> Unit,
     onExportSingleHtml: (saveToDevice: Boolean) -> Unit,
     onExportAndroidZip: (saveToDevice: Boolean) -> Unit,
@@ -92,6 +96,7 @@ fun ExportScreen(
     val clipboard = LocalClipboardManager.current
 
     var showWebsiteSheet by remember { mutableStateOf(false) }
+    var selectedDeployProvider by remember { mutableStateOf(HostingProvider.FREE_INSTANT) }
     var showAndroidSheet by remember { mutableStateOf(false) }
     var showIosDesktopSheet by remember { mutableStateOf(false) }
     var showPwaSheet by remember { mutableStateOf(false) }
@@ -99,6 +104,15 @@ fun ExportScreen(
     var showQrDialog by remember { mutableStateOf(false) }
     var showAppShellPreview by remember { mutableStateOf(false) }
     var qrUrlOverride by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(autoOpenFreeDeploy) {
+        if (autoOpenFreeDeploy) {
+            selectedDeployProvider = HostingProvider.FREE_INSTANT
+            showWebsiteSheet = true
+            onConsumeAutoOpenFreeDeploy()
+            onPublishFreeNow()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -149,12 +163,30 @@ fun ExportScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             ExportOptionCard(
+                title = strings.freePublishTitle,
+                subtitle = strings.freePublishSubtitle,
+                badgeColor = WebForgeSuccess,
+                icon = Icons.Rounded.Public,
+                testTag = "export_free_publish_card",
+                onClick = {
+                    selectedDeployProvider = HostingProvider.FREE_INSTANT
+                    showWebsiteSheet = true
+                    onPublishFreeNow()
+                },
+                trailing = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionCard(
                 title = strings.websiteCardTitle,
                 subtitle = strings.websiteCardSubtitle,
                 badgeColor = WebForgePrimary,
                 icon = Icons.Rounded.Language,
                 testTag = "export_website_card",
-                onClick = { showWebsiteSheet = true },
+                onClick = {
+                    selectedDeployProvider = HostingProvider.FREE_INSTANT
+                    showWebsiteSheet = true
+                },
                 trailing = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -251,6 +283,7 @@ fun ExportScreen(
             deployState = state.deployState,
             isOffline = state.isEffectiveOffline,
             isRtl = state.settings.language.isRtl,
+            initialProvider = selectedDeployProvider,
             onCustomDomainChange = { dom -> onUpdateAppConfig { it.copy(customDomain = dom) } },
             onDismiss = {
                 onResetDeployState()

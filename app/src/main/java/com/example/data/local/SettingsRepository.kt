@@ -122,6 +122,7 @@ class SettingsRepository(private val context: Context) {
     ) {
         context.webForgeDataStore.edit { prefs ->
             when (provider) {
+                HostingProvider.FREE_INSTANT -> Unit
                 HostingProvider.GITHUB_PAGES -> {
                     prefs[Keys.GITHUB_TOKEN] = token
                     if (primaryParam.isNotBlank()) prefs[Keys.GITHUB_OWNER] = primaryParam

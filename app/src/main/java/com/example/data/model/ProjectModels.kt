@@ -63,6 +63,7 @@ enum class BackButtonBehavior(val key: String) {
 }
 
 enum class HostingProvider(val key: String, val title: String) {
+    FREE_INSTANT("free_instant", "Free Instant (No Token)"),
     GITHUB_PAGES("github_pages", "GitHub Pages"),
     NETLIFY("netlify", "Netlify"),
     VERCEL("vercel", "Vercel"),

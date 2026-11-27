@@ -5,21 +5,25 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
@@ -27,6 +31,7 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.FindReplace
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,18 +49,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -133,6 +144,7 @@ fun CodeEditorCard(
     codeIssues: List<CodeIssue> = emptyList(),
     onApplyFix: (String) -> Unit = {},
     onExpandEmmet: (String) -> Unit = {},
+    onPasteFromToolbar: () -> Unit = {},
     isRtlUi: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
@@ -141,6 +153,8 @@ fun CodeEditorCard(
     val lineCount = remember(code) { code.count { it == '\n' } + 1 }
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     var showSearchReplace by remember { mutableStateOf(false) }
     var showEmmetBar by remember { mutableStateOf(false) }
@@ -213,10 +227,11 @@ fun CodeEditorCard(
         fontSize = fontSizeSp.sp,
         lineHeight = (fontSizeSp + 6).sp,
         color = effectiveTextColor,
+        textDirection = TextDirection.Ltr,
     )
 
     Column(modifier = modifier) {
-        // Editor Micro-Toolbar (Undo, Redo, Find & Replace, Emmet, Lint count)
+        // Editor Micro-Toolbar (Paste, Undo, Redo, Find & Replace, Emmet, Lint)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -224,6 +239,23 @@ fun CodeEditorCard(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Surface(
+                onClick = onPasteFromToolbar,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                border = BorderStroke(1.dp, ext.accent.copy(alpha = 0.6f)),
+                modifier = Modifier.testTag("editor_toolbar_paste"),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.Rounded.ContentPaste, null, tint = ext.accent, modifier = Modifier.size(15.dp))
+                    Text(strings.pasteHtmlCode, style = MaterialTheme.typography.labelSmall, color = ext.accent, fontWeight = FontWeight.Bold)
+                }
+            }
+
             IconButton(
                 onClick = onUndo,
                 enabled = canUndo,
@@ -307,15 +339,12 @@ fun CodeEditorCard(
             }
         }
 
-        // Collapsible Find & Replace Bar
         AnimatedVisibility(visible = showSearchReplace) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, ext.cardBorder),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -360,15 +389,12 @@ fun CodeEditorCard(
             }
         }
 
-        // Collapsible Emmet Shorthand Bar
         AnimatedVisibility(visible = showEmmetBar) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, ext.cardBorder),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             ) {
                 Row(
                     modifier = Modifier.padding(10.dp),
@@ -392,15 +418,12 @@ fun CodeEditorCard(
             }
         }
 
-        // Collapsible Code Lint Issues Panel with 1-tap Fixes
         AnimatedVisibility(visible = showLintPanel && codeIssues.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.5f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     codeIssues.forEach { issue ->
@@ -428,59 +451,91 @@ fun CodeEditorCard(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Code editor is always LTR for accurate HTML/CSS/JS syntax editing
+        // Code editor is always LTR; full-area tap focuses BasicTextField and opens soft keyboard reliably
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             GlowingFrameCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 210.dp, max = 310.dp),
+                    .heightIn(min = 230.dp, max = 330.dp),
                 containerColor = palette.bg,
             ) {
-                Row(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(verticalScroll),
+                        .heightIn(min = 230.dp, max = 330.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        },
                 ) {
-                    Column(
+                    val minEditableWidth = (maxWidth - 48.dp).coerceAtLeast(220.dp)
+                    Row(
                         modifier = Modifier
-                            .background(palette.gutter)
-                            .padding(horizontal = 10.dp, vertical = 12.dp)
-                            .fillMaxHeight(),
-                        horizontalAlignment = Alignment.End,
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 230.dp)
+                            .verticalScroll(verticalScroll),
                     ) {
-                        for (line in 1..lineCount) {
-                            Text(
-                                text = line.toString(),
-                                style = codeTextStyle.copy(
-                                    color = palette.comment,
-                                    fontSize = (fontSizeSp - 1).coerceAtLeast(9).sp,
-                                ),
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(horizontalScroll)
-                            .padding(horizontal = 12.dp, vertical = 12.dp),
-                    ) {
-                        if (code.isEmpty()) {
-                            Text(
-                                text = "<!-- Paste or write HTML / CSS / JS here -->",
-                                style = codeTextStyle.copy(color = palette.comment),
-                            )
-                        }
-                        BasicTextField(
-                            value = code,
-                            onValueChange = onCodeChange,
-                            textStyle = codeTextStyle,
-                            cursorBrush = SolidColor(ext.accent),
-                            visualTransformation = syntaxTransformation,
+                        Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("html_code_editor"),
-                        )
+                                .background(palette.gutter)
+                                .defaultMinSize(minHeight = 230.dp)
+                                .padding(horizontal = 10.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            for (line in 1..lineCount) {
+                                Text(
+                                    text = line.toString(),
+                                    style = codeTextStyle.copy(
+                                        color = palette.comment,
+                                        fontSize = (fontSizeSp - 1).coerceAtLeast(9).sp,
+                                    ),
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 230.dp)
+                                .horizontalScroll(horizontalScroll)
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                        ) {
+                            BasicTextField(
+                                value = code,
+                                onValueChange = onCodeChange,
+                                textStyle = codeTextStyle,
+                                cursorBrush = SolidColor(ext.accent),
+                                visualTransformation = syntaxTransformation,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Text,
+                                    autoCorrectEnabled = false,
+                                    imeAction = ImeAction.Default,
+                                ),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier
+                                            .widthIn(min = minEditableWidth)
+                                            .defaultMinSize(minHeight = 206.dp),
+                                    ) {
+                                        if (code.isEmpty()) {
+                                            Text(
+                                                text = "<!-- Paste or write HTML / CSS / JS here -->",
+                                                style = codeTextStyle.copy(color = palette.comment),
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .widthIn(min = minEditableWidth)
+                                    .defaultMinSize(minHeight = 206.dp)
+                                    .focusRequester(focusRequester)
+                                    .testTag("html_code_editor"),
+                            )
+                        }
                     }
                 }
             }

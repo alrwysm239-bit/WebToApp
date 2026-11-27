@@ -125,6 +125,7 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
     var aiInitialPrompt by remember { mutableStateOf<String?>(null) }
     var showToolsHubSheet by remember { mutableStateOf(false) }
     var showPreviewQrDialog by remember { mutableStateOf(false) }
+    var pendingAutoFreeDeploy by remember { mutableStateOf(false) }
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -347,6 +348,10 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                             navigateToTab(ROUTE_EDITOR)
                                         },
                                         onContinueEditor = { navigateToTab(ROUTE_EDITOR) },
+                                        onPublishFreeClick = {
+                                            pendingAutoFreeDeploy = true
+                                            navigateToTab(ROUTE_EXPORT)
+                                        },
                                         onOpenProjects = { navigateToTab(ROUTE_PROJECTS) },
                                         onOpenTemplates = { showTemplatesSheet = true },
                                         onOpenToolsHub = { showToolsHubSheet = true },
@@ -387,6 +392,10 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                             viewModel.reloadPreview()
                                             navigateToTab(ROUTE_PREVIEW)
                                         },
+                                        onPublishFreeClick = {
+                                            pendingAutoFreeDeploy = true
+                                            navigateToTab(ROUTE_EXPORT)
+                                        },
                                         onFormatClick = viewModel::formatCurrentCode,
                                         onMinifyClick = viewModel::minifyProjectCode,
                                         onFixLinksClick = viewModel::fixRelativeLinks,
@@ -416,6 +425,9 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                 composable(ROUTE_EXPORT) {
                                     ExportScreen(
                                         state = state,
+                                        autoOpenFreeDeploy = pendingAutoFreeDeploy,
+                                        onConsumeAutoOpenFreeDeploy = { pendingAutoFreeDeploy = false },
+                                        onPublishFreeNow = viewModel::publishFreeWithoutToken,
                                         onExportWebsiteZip = viewModel::exportWebsiteZip,
                                         onExportSingleHtml = viewModel::exportSingleSelfContainedHtml,
                                         onExportAndroidZip = viewModel::exportAndroidWebViewProject,

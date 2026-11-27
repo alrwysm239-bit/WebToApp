@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.FolderCopy
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Icon
@@ -70,6 +71,7 @@ fun HomeScreen(
     savedProjects: List<ProjectSummary>,
     onNewBlankProject: () -> Unit,
     onContinueEditor: () -> Unit,
+    onPublishFreeClick: () -> Unit,
     onOpenProjects: () -> Unit,
     onOpenTemplates: () -> Unit,
     onOpenToolsHub: () -> Unit,
@@ -225,6 +227,17 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f).testTag("home_import_card"),
                 )
             }
+
+            Spacer(Modifier.height(10.dp))
+
+            HubTileCard(
+                title = strings.freePublishTitle,
+                subtitle = strings.freePublishSubtitle,
+                icon = Icons.Rounded.Public,
+                accent = WebForgeSuccess,
+                onClick = onPublishFreeClick,
+                modifier = Modifier.fillMaxWidth().testTag("home_free_publish_card"),
+            )
 
             Spacer(Modifier.height(10.dp))
 

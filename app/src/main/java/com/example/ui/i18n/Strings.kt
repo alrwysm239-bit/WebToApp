@@ -144,6 +144,11 @@ data class WebForgeStrings(
     val backupImport: String,
     val clearTokens: String,
     val clearAllData: String,
+    val freePublishTitle: String,
+    val freePublishSubtitle: String,
+    val freePublishButton: String,
+    val freePublishNoTokenNote: String,
+    val pasteInBoxTitle: String,
 )
 
 val ArabicStrings = WebForgeStrings(
@@ -285,6 +290,11 @@ val ArabicStrings = WebForgeStrings(
     backupImport = "استيراد نسخة احتياطية",
     clearTokens = "مسح التوكنات المحفوظة",
     clearAllData = "مسح جميع المشاريع والبيانات",
+    freePublishTitle = "إنشاء موقع على النت مجاناً (بدون توكن)",
+    freePublishSubtitle = "نشر فوري لكود أو ملف HTML برابط حي وQR بدون أي حساب",
+    freePublishButton = "إنشاء موقع مجاناً بدون توكن",
+    freePublishNoTokenNote = "نشر مجاني وفوري بدون تسجيل أو Token — ستحصل على رابط موقع حي ورمز QR مباشرة.",
+    pasteInBoxTitle = "لصق أو إدخال كود HTML",
 )
 
 val EnglishStrings = WebForgeStrings(
@@ -426,6 +436,11 @@ val EnglishStrings = WebForgeStrings(
     backupImport = "Import Backup",
     clearTokens = "Clear Saved Tokens",
     clearAllData = "Clear All Projects & Data",
+    freePublishTitle = "Publish Free Website (No Token)",
+    freePublishSubtitle = "Instant live HTTPS link & QR from your HTML with zero signup",
+    freePublishButton = "Create Live Site Free (No Token)",
+    freePublishNoTokenNote = "100% free instant web hosting with no account or token required. Returns a live URL and QR code immediately.",
+    pasteInBoxTitle = "Paste or Type HTML Code",
 )
 
 val LocalStrings = staticCompositionLocalOf { ArabicStrings }

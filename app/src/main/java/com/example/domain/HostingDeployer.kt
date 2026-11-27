@@ -27,6 +27,53 @@ class HostingDeployer {
     private val zipMediaType = "application/zip".toMediaType()
     private val octetMediaType = "application/octet-stream".toMediaType()
 
+    suspend fun deployFreeInstant(
+        singleHtml: String,
+        zipBytes: ByteArray,
+        onProgress: (String) -> Unit,
+    ): String = withContext(Dispatchers.IO) {
+        onProgress("1/2")
+        // Primary: ship.page anonymous ZIP deploy (supports full multi-file HTML/CSS/JS/images, zero token)
+        val shipResult = runCatching {
+            val shipReq = Request.Builder()
+                .url("https://ship.page/deploy")
+                .header("Content-Type", "application/zip")
+                .header("Accept", "application/json")
+                .post(zipBytes.toRequestBody(zipMediaType))
+                .build()
+            client.newCall(shipReq).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) error("ship.page (${resp.code}): $body")
+                val url = JSONObject(body).optString("url").trim()
+                if (!url.startsWith("http")) error("Invalid URL from ship.page")
+                url
+            }
+        }
+        if (shipResult.isSuccess) return@withContext shipResult.getOrThrow()
+
+        // Fallback: htmlshare.net anonymous single-HTML publish API (zero token)
+        onProgress("2/2")
+        val payload = JSONObject().apply {
+            put("html", singleHtml)
+        }.toString()
+        val htmlShareReq = Request.Builder()
+            .url("https://api.htmlshare.net/v1/publish")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .post(payload.toRequestBody(jsonMediaType))
+            .build()
+        client.newCall(htmlShareReq).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                val shipErr = shipResult.exceptionOrNull()?.message.orEmpty()
+                error("Free instant publish failed ($shipErr | htmlshare ${resp.code}): $body")
+            }
+            val url = JSONObject(body).optString("url").trim()
+            if (!url.startsWith("http")) error("Invalid URL returned by hosting service.")
+            url
+        }
+    }
+
     suspend fun deployToGitHubPages(
         token: String,
         owner: String,

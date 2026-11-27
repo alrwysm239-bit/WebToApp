@@ -82,6 +82,7 @@ fun HostingDeploySheet(
     deployState: DeployState,
     isOffline: Boolean,
     isRtl: Boolean,
+    initialProvider: HostingProvider = HostingProvider.FREE_INSTANT,
     onCustomDomainChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onDeploy: (HostingProvider, token: String, primaryParam: String, secondaryParam: String, saveToken: Boolean) -> Unit,
@@ -92,7 +93,7 @@ fun HostingDeploySheet(
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
-    var selectedProvider by remember { mutableStateOf(HostingProvider.GITHUB_PAGES) }
+    var selectedProvider by remember(initialProvider) { mutableStateOf(initialProvider) }
     var token by remember { mutableStateOf("") }
     var primaryParam by remember { mutableStateOf("") }
     var secondaryParam by remember { mutableStateOf(HtmlToolkit.slugify(projectName)) }
@@ -101,6 +102,10 @@ fun HostingDeploySheet(
 
     LaunchedEffect(selectedProvider, savedTokens) {
         when (selectedProvider) {
+            HostingProvider.FREE_INSTANT -> {
+                token = ""
+                primaryParam = ""
+            }
             HostingProvider.GITHUB_PAGES -> {
                 token = savedTokens.githubToken
                 primaryParam = savedTokens.githubOwner
@@ -174,83 +179,100 @@ fun HostingDeploySheet(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("${strings.tokenLabel} (${selectedProvider.title})") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().testTag("deploy_token_input"),
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            when (selectedProvider) {
-                HostingProvider.GITHUB_PAGES -> {
-                    OutlinedTextField(
-                        value = primaryParam,
-                        onValueChange = { primaryParam = it },
-                        label = { Text("GitHub Username / Owner") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = secondaryParam,
-                        onValueChange = { secondaryParam = it },
-                        label = { Text("Repository Name") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                HostingProvider.NETLIFY -> {
-                    OutlinedTextField(
-                        value = primaryParam,
-                        onValueChange = { primaryParam = it },
-                        label = { Text("Netlify Site ID (Optional — auto-created if empty)") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                HostingProvider.VERCEL -> {
+            if (selectedProvider == HostingProvider.FREE_INSTANT) {
+                Surface(
+                    color = ext.success.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, ext.success.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Text(
-                        text = if (isRtl) "سيتم إنشاء نشر فوري على Vercel وتوليد رابط *.vercel.app" else "Deploys instantly to Vercel with a live *.vercel.app URL",
+                        text = strings.freePublishNoTokenNote,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = ext.success,
+                        modifier = Modifier.padding(12.dp),
                     )
                 }
-                HostingProvider.CLOUDFLARE_PAGES -> {
-                    OutlinedTextField(
-                        value = primaryParam,
-                        onValueChange = { primaryParam = it },
-                        label = { Text("Cloudflare Account ID") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                HostingProvider.FIREBASE_HOSTING -> {
-                    OutlinedTextField(
-                        value = primaryParam,
-                        onValueChange = { primaryParam = it },
-                        label = { Text("Firebase Hosting Site ID") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                Checkbox(checked = saveTokenLocally, onCheckedChange = { saveTokenLocally = it })
-                Text(
-                    text = if (isRtl) "حفظ التوكن محلياً للنشر السريع لاحقاً" else "Remember token locally for next deploy",
-                    style = MaterialTheme.typography.bodySmall,
+            } else {
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("${strings.tokenLabel} (${selectedProvider.title})") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("deploy_token_input"),
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                when (selectedProvider) {
+                    HostingProvider.FREE_INSTANT -> Unit
+                    HostingProvider.GITHUB_PAGES -> {
+                        OutlinedTextField(
+                            value = primaryParam,
+                            onValueChange = { primaryParam = it },
+                            label = { Text("GitHub Username / Owner") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = secondaryParam,
+                            onValueChange = { secondaryParam = it },
+                            label = { Text("Repository Name") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    HostingProvider.NETLIFY -> {
+                        OutlinedTextField(
+                            value = primaryParam,
+                            onValueChange = { primaryParam = it },
+                            label = { Text("Netlify Site ID (Optional — auto-created if empty)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    HostingProvider.VERCEL -> {
+                        Text(
+                            text = if (isRtl) "سيتم إنشاء نشر فوري على Vercel وتوليد رابط *.vercel.app" else "Deploys instantly to Vercel with a live *.vercel.app URL",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    HostingProvider.CLOUDFLARE_PAGES -> {
+                        OutlinedTextField(
+                            value = primaryParam,
+                            onValueChange = { primaryParam = it },
+                            label = { Text("Cloudflare Account ID") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    HostingProvider.FIREBASE_HOSTING -> {
+                        OutlinedTextField(
+                            value = primaryParam,
+                            onValueChange = { primaryParam = it },
+                            label = { Text("Firebase Hosting Site ID") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Checkbox(checked = saveTokenLocally, onCheckedChange = { saveTokenLocally = it })
+                    Text(
+                        text = if (isRtl) "حفظ التوكن محلياً للنشر السريع لاحقاً" else "Remember token locally for next deploy",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             // Custom Domain (CNAME) & DNS Guide
@@ -355,7 +377,7 @@ fun HostingDeploySheet(
             }
 
             GradientButton(
-                text = strings.deployNow,
+                text = if (selectedProvider == HostingProvider.FREE_INSTANT) strings.freePublishButton else strings.deployNow,
                 icon = Icons.Rounded.CloudUpload,
                 enabled = !isOffline && deployState !is DeployState.InProgress,
                 onClick = { onDeploy(selectedProvider, token, primaryParam, secondaryParam, saveTokenLocally) },

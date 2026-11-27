@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -11,9 +13,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,9 +37,11 @@ import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Splitscreen
 import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -51,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,9 +66,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.data.model.DeviceFrame
 import com.example.ui.WebForgeUiState
@@ -75,6 +83,14 @@ import com.example.ui.components.OutlinedGlowButton
 import com.example.ui.components.PrimaryCtaBrush
 import com.example.ui.i18n.LocalStrings
 import com.example.ui.theme.LocalWebForgeColors
+
+private fun readSystemClipboardText(context: Context): String {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return ""
+    val clip = cm.primaryClip ?: return ""
+    if (clip.itemCount == 0) return ""
+    val item = clip.getItemAt(0)
+    return item.coerceToText(context)?.toString().orEmpty()
+}
 
 @Composable
 fun EditorScreen(
@@ -91,6 +107,7 @@ fun EditorScreen(
     onPasteHtml: (String) -> Unit,
     onUploadClick: () -> Unit,
     onConvertClick: () -> Unit,
+    onPublishFreeClick: () -> Unit,
     onFormatClick: () -> Unit,
     onMinifyClick: () -> Unit,
     onFixLinksClick: () -> Unit,
@@ -106,8 +123,21 @@ fun EditorScreen(
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
+    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var splitViewEnabled by remember { mutableStateOf(false) }
+    var showPasteModal by remember { mutableStateOf(false) }
+    var pasteModalText by remember { mutableStateOf("") }
+
+    fun handleSmartPaste() {
+        val sysText = readSystemClipboardText(context).ifBlank { clipboard.getText()?.text.orEmpty() }
+        if (sysText.isNotBlank()) {
+            onPasteHtml(sysText)
+        } else {
+            pasteModalText = state.currentEditorCode
+            showPasteModal = true
+        }
+    }
 
     Column(
         modifier = modifier
@@ -117,7 +147,7 @@ fun EditorScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(modifier = Modifier.widthIn(max = 820.dp).fillMaxWidth()) {
-            // Header row: New Project + Split View + Templates + Save
+            // Clean single-line title + compact action bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -129,6 +159,7 @@ fun EditorScreen(
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
                     )
                     val lineCount = state.currentEditorCode.count { it == '\n' } + 1
                     Text(
@@ -141,29 +172,31 @@ fun EditorScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = { splitViewEnabled = !splitViewEnabled },
-                        modifier = Modifier.testTag("toggle_split_view_button"),
+                        modifier = Modifier.size(40.dp).testTag("toggle_split_view_button"),
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Splitscreen,
-                            contentDescription = strings.splitView,
-                            tint = if (splitViewEnabled) ext.success else ext.accent,
-                        )
+                        Icon(Icons.Rounded.Splitscreen, strings.splitView, tint = if (splitViewEnabled) ext.success else ext.accent)
                     }
-                    IconButton(onClick = onOpenFileManager, modifier = Modifier.testTag("open_file_manager_button")) {
+                    IconButton(
+                        onClick = onOpenFileManager,
+                        modifier = Modifier.size(40.dp).testTag("open_file_manager_button"),
+                    ) {
                         Icon(Icons.Rounded.FolderOpen, strings.fileManagerTitle, tint = ext.accent)
                     }
-                    IconButton(onClick = onOpenAiStudio, modifier = Modifier.testTag("editor_open_ai_button")) {
+                    IconButton(
+                        onClick = onOpenAiStudio,
+                        modifier = Modifier.size(40.dp).testTag("editor_open_ai_button"),
+                    ) {
                         Icon(Icons.Rounded.AutoAwesome, strings.aiStudioTitle, tint = ext.softViolet)
                     }
-                    TextButton(
+                    IconButton(
                         onClick = onLoadStarter,
-                        modifier = Modifier.testTag("starter_template_button"),
+                        modifier = Modifier.size(40.dp).testTag("starter_template_button"),
                     ) {
-                        Icon(Icons.Rounded.RestartAlt, strings.starterTemplate, modifier = Modifier.size(16.dp), tint = ext.accent)
+                        Icon(Icons.Rounded.RestartAlt, strings.starterTemplate, tint = ext.accent)
                     }
                     IconButton(
                         onClick = onSaveProject,
-                        modifier = Modifier.testTag("quick_save_button"),
+                        modifier = Modifier.size(40.dp).testTag("quick_save_button"),
                     ) {
                         Icon(Icons.Rounded.BookmarkAdd, strings.saveProjectNow, tint = ext.success)
                     }
@@ -249,7 +282,7 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Syntax-Highlighted Code Editor with Themes, Font Size, Undo/Redo, Find/Replace, Emmet & Lint
+            // Syntax-Highlighted Code Editor with full-box focus/keyboard, Paste, Emmet & Lint
             CodeEditorCard(
                 code = state.currentEditorCode,
                 onCodeChange = onCodeChange,
@@ -262,10 +295,13 @@ fun EditorScreen(
                 codeIssues = state.codeIssues,
                 onApplyFix = onApplyLintFix,
                 onExpandEmmet = onExpandEmmet,
+                onPasteFromToolbar = {
+                    pasteModalText = readSystemClipboardText(context).ifBlank { clipboard.getText()?.text.orEmpty() }
+                    showPasteModal = true
+                },
                 isRtlUi = state.settings.language.isRtl,
             )
 
-            // Optional Split-Screen Live Mini Preview
             AnimatedVisibility(visible = splitViewEnabled) {
                 Column(modifier = Modifier.padding(top = 10.dp)) {
                     Text(
@@ -295,7 +331,6 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Smart Code Tools & Import Chips Row
             Text(
                 text = strings.toolsTitle,
                 style = MaterialTheme.typography.labelMedium,
@@ -315,14 +350,14 @@ fun EditorScreen(
                 ToolChip(strings.importFromUrl, Icons.Rounded.CloudDownload, ext.softViolet, onOpenUrlGithubImport, "editor_url_import_button")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             GradientButton(
                 text = strings.pasteHtmlCode,
                 icon = Icons.Rounded.ContentPaste,
                 brush = PrimaryCtaBrush,
                 testTag = "paste_html_button",
-                onClick = { onPasteHtml(clipboard.getText()?.text.orEmpty()) },
+                onClick = ::handleSmartPaste,
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -336,7 +371,7 @@ fun EditorScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             GradientButton(
                 text = strings.convertAndPreview,
@@ -348,8 +383,51 @@ fun EditorScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedGlowButton(
+                text = strings.freePublishButton,
+                icon = Icons.Rounded.Public,
+                testTag = "editor_free_publish_button",
+                onClick = onPublishFreeClick,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Spacer(modifier = Modifier.height(20.dp))
         }
+    }
+
+    if (showPasteModal) {
+        AlertDialog(
+            onDismissRequest = { showPasteModal = false },
+            title = { Text(strings.pasteInBoxTitle, fontWeight = FontWeight.Bold) },
+            text = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    OutlinedTextField(
+                        value = pasteModalText,
+                        onValueChange = { pasteModalText = it },
+                        label = { Text("HTML / CSS / JS") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 260.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (pasteModalText.isNotBlank()) {
+                        onPasteHtml(pasteModalText)
+                    }
+                    showPasteModal = false
+                }) {
+                    Text(strings.save, color = ext.success, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPasteModal = false }) {
+                    Text(strings.cancel)
+                }
+            },
+        )
     }
 }
 

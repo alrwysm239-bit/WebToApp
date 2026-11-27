@@ -139,4 +139,16 @@ class WebForgeToolkitTest {
         assertTrue(diff.any { it.type == DiffType.ADDED && it.text.contains("New") })
         assertTrue(diff.any { it.type == DiffType.UNCHANGED && it.text.contains("Keep") })
     }
+
+    @Test
+    fun `freeInstantHostingProvider is first and resolves without token`() {
+        assertEquals(
+            com.example.data.model.HostingProvider.FREE_INSTANT,
+            com.example.data.model.HostingProvider.entries.first(),
+        )
+        assertEquals(
+            com.example.data.model.HostingProvider.FREE_INSTANT,
+            com.example.data.model.HostingProvider.fromKey("free_instant"),
+        )
+    }
 }

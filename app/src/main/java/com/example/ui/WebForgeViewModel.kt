@@ -804,6 +804,17 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
                 when (provider) {
+                    HostingProvider.FREE_INSTANT -> {
+                        val zipBytes = withContext(Dispatchers.IO) { ZipArchiveManager.zipFileMap(fileMap) }
+                        val singleHtml = withContext(Dispatchers.Default) {
+                            CodeLinterAndAudit.bundleSingleSelfContainedHtml(state.htmlContent, state.assets)
+                        }
+                        deployer.deployFreeInstant(
+                            singleHtml = singleHtml,
+                            zipBytes = zipBytes,
+                            onProgress = { s -> _uiState.update { it.copy(deployState = DeployState.InProgress(s)) } },
+                        )
+                    }
                     HostingProvider.GITHUB_PAGES -> deployer.deployToGitHubPages(
                         token = token,
                         owner = primaryParam,
@@ -856,6 +867,16 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                 }
             }
         }
+    }
+
+    fun publishFreeWithoutToken() {
+        deployWebsite(
+            provider = HostingProvider.FREE_INSTANT,
+            token = "",
+            primaryParam = "",
+            secondaryParam = "",
+            saveTokenLocally = false,
+        )
     }
 
     fun resetDeployState() = _uiState.update { it.copy(deployState = DeployState.Idle) }
