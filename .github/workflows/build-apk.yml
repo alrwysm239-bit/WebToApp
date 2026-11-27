@@ -78,6 +78,26 @@ jobs:
           print("Patched GoogleAuthHelper.kt")
           PY
 
+      # FIX 2: the admin dialog silently ignores a cancelled/failed Google
+      # sign-in. Show a clear message instead.
+      - name: Patch source (show sign-in cancel message)
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          p = pathlib.Path("app/src/main/java/com/example/ui/components/AdminControlPanelDialog.kt")
+          if not p.exists():
+              raise SystemExit(0)
+          s = p.read_text(encoding="utf-8")
+          old = "onAuthCancelled = { authBusy = false },"
+          new = 'onAuthCancelled = { authBusy = false; authError = "لم يكتمل تسجيل الدخول. إذا اخترت الحساب ثم رجعت الشاشة، فغالباً بصمة SHA-1 غير مضافة في Firebase." },'
+          if old in s:
+              p.write_text(s.replace(old, new), encoding="utf-8")
+              print("Patched AdminControlPanelDialog.kt")
+          else:
+              print("Already patched or not found")
+          PY
+
       # Optional: add a repo secret named GOOGLE_SERVICES_JSON (the full
       # content of google-services.json from Firebase Console) to enable
       # Google sign-in and Firestore in the built APK.
