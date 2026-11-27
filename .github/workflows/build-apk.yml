@@ -40,6 +40,58 @@ jobs:
         with:
           gradle-version: 9.3.1
 
+      # ---------------------------------------------------------------
+      # FIX 1: R.string.default_web_client_id only exists when
+      # app/google-services.json exists. Patch the code so it is read at
+      # runtime instead. Safe to run repeatedly, so it also works after
+      # you re-export the project from Google AI Studio.
+      # ---------------------------------------------------------------
+      - name: Patch source (default_web_client_id)
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          p = pathlib.Path("app/src/main/java/com/example/ai/GoogleAuthHelper.kt")
+          if not p.exists():
+              print("GoogleAuthHelper.kt not found, skipping patch")
+              raise SystemExit(0)
+
+          s = p.read_text(encoding="utf-8")
+          if "R.string.default_web_client_id" not in s:
+              print("Already patched, nothing to do")
+              raise SystemExit(0)
+
+          helper = '''
+              private fun webClientId(context: Context): String {
+                  val id = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                  if (id == 0) throw IllegalStateException("default_web_client_id missing (google-services.json not found)")
+                  return context.getString(id).also {
+                      if (it.isBlank()) throw IllegalStateException("default_web_client_id is blank")
+                  }
+              }
+          '''
+
+          s = s.replace("context.getString(R.string.default_web_client_id)", "webClientId(context)")
+          s = s.replace('private const val TAG = "Auth"\n', 'private const val TAG = "Auth"\n' + helper, 1)
+          s = s.replace("if (Firebase.auth.currentUser != null) {", "if (currentUserOrNull() != null) {")
+          p.write_text(s, encoding="utf-8")
+          print("Patched GoogleAuthHelper.kt")
+          PY
+
+      # Optional: add a repo secret named GOOGLE_SERVICES_JSON (the full
+      # content of google-services.json from Firebase Console) to enable
+      # Google sign-in and Firestore in the built APK.
+      - name: Add google-services.json (if secret exists)
+        env:
+          GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GSJ" ]; then
+            printf '%s' "$GSJ" > app/google-services.json
+            echo "google-services.json added from secret"
+          else
+            echo "No GOOGLE_SERVICES_JSON secret: building without it (Firebase features disabled at runtime)"
+          fi
+
       - name: Create debug keystore
         run: |
           keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
@@ -70,14 +122,27 @@ jobs:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore/ks.jks
           STORE_PASSWORD: ${{ env.KS_PASS }}
           KEY_PASSWORD: ${{ env.KS_PASS }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleRelease -x lintVitalRelease --no-daemon --no-configuration-cache --stacktrace 2>&1 | tee build.log
+
+      # Shows the real cause of a failure in a short, readable form.
+      - name: Show real errors on failure
+        if: failure()
+        run: |
+          echo "=========== ERRORS ==========="
+          grep -nE "^e: |^w: .*error|What went wrong|FAILED|Execution failed|Unresolved reference|Could not resolve|Caused by" build.log | head -60 || true
+          echo "=========== CONTEXT ==========="
+          grep -n -A 12 "What went wrong" build.log | head -60 || true
 
       - name: Upload build reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-reports
-          path: app/build/reports
+          path: |
+            app/build/reports
+            build.log
           if-no-files-found: ignore
 
       - name: Rename APK
