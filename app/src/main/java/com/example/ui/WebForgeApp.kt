@@ -69,6 +69,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.ai.AdminConfigRepository
+import com.example.ai.GoogleAuthHelper
 import com.example.ui.components.FileManagerSheet
 import com.example.ui.components.GeminiAiStudioSheet
 import com.example.ui.components.QrCodeDialog
@@ -128,6 +130,15 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
     var pendingAutoFreeDeploy by remember { mutableStateOf(false) }
     var pendingAutoApkBuilder by remember { mutableStateOf(false) }
     var pendingAutoIosBuilder by remember { mutableStateOf(false) }
+
+    val authUser by remember { GoogleAuthHelper.authStateFlow() }
+        .collectAsStateWithLifecycle(initialValue = GoogleAuthHelper.currentUserOrNull())
+    val adminRepo = remember(context) { AdminConfigRepository(context.applicationContext) }
+    LaunchedEffect(authUser?.uid) {
+        if (!authUser?.uid.isNullOrBlank()) {
+            adminRepo.syncSignedInPublicRuntime(context.applicationContext)
+        }
+    }
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -374,6 +385,9 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                             viewModel.reopenProject(id)
                                             navigateToTab(ROUTE_EDITOR)
                                         },
+                                        onOpenUrl = { url ->
+                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+                                        },
                                     )
                                 }
 
@@ -502,6 +516,9 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                         onClearAllData = viewModel::clearAllData,
                                         onReopenOnboarding = viewModel::reopenOnboarding,
                                         onNotifyMessage = viewModel::emitMessage,
+                                        onOpenUrl = { url ->
+                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+                                        },
                                     )
                                 }
                             }

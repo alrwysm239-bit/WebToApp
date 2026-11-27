@@ -24,10 +24,14 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Reads Gemini API key: 1) user key saved locally in SharedPreferences, 2) BuildConfig.GEMINI_API_KEY. */
+/** Reads Gemini config: 1) Admin Proxy URL (no client key needed), 2) Admin/local key, 3) BuildConfig.GEMINI_API_KEY. */
 object GeminiConfig {
     private const val PREFS_NAME = "webforge_gemini_prefs"
     private const val KEY_API_KEY = "gemini_api_key"
+    private const val KEY_PROXY_URL = "gemini_proxy_url"
+    private const val KEY_AI_ENABLED = "gemini_ai_enabled"
+    private const val KEY_ADMIN_PW_SALT = "admin_pw_salt"
+    private const val KEY_ADMIN_PW_HASH = "admin_pw_hash"
 
     @Volatile
     private var appContext: Context? = null
@@ -55,6 +59,69 @@ object GeminiConfig {
             .commit()
     }
 
+    fun getProxyUrl(context: Context? = appContext): String {
+        val ctx = context?.applicationContext ?: appContext ?: return ""
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_PROXY_URL, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    fun isAiEnabled(context: Context? = appContext): Boolean {
+        val ctx = context?.applicationContext ?: appContext ?: return true
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AI_ENABLED, true)
+    }
+
+    fun getLocalAdminPasswordSalt(context: Context? = appContext): String {
+        val ctx = context?.applicationContext ?: appContext ?: return ""
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_ADMIN_PW_SALT, "")
+            .orEmpty()
+    }
+
+    fun getLocalAdminPasswordHash(context: Context? = appContext): String {
+        val ctx = context?.applicationContext ?: appContext ?: return ""
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_ADMIN_PW_HASH, "")
+            .orEmpty()
+    }
+
+    fun applyPublicRuntime(aiEnabled: Boolean, proxyUrl: String, context: Context? = appContext) {
+        val ctx = context?.applicationContext ?: appContext ?: return
+        val cleanProxy = proxyUrl.trim()
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AI_ENABLED, aiEnabled)
+            .apply {
+                if (cleanProxy.isEmpty()) remove(KEY_PROXY_URL) else putString(KEY_PROXY_URL, cleanProxy)
+            }
+            .commit()
+    }
+
+    fun applyAdminCloudSettings(
+        aiEnabled: Boolean,
+        proxyUrl: String,
+        geminiApiKey: String,
+        passwordSalt: String,
+        passwordHash: String,
+        context: Context? = appContext,
+    ) {
+        val ctx = context?.applicationContext ?: appContext ?: return
+        val cleanProxy = proxyUrl.trim()
+        val cleanKey = geminiApiKey.trim()
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AI_ENABLED, aiEnabled)
+            .apply {
+                if (cleanProxy.isEmpty()) remove(KEY_PROXY_URL) else putString(KEY_PROXY_URL, cleanProxy)
+                if (cleanKey.isEmpty()) remove(KEY_API_KEY) else putString(KEY_API_KEY, cleanKey)
+                if (passwordSalt.isBlank()) remove(KEY_ADMIN_PW_SALT) else putString(KEY_ADMIN_PW_SALT, passwordSalt)
+                if (passwordHash.isBlank()) remove(KEY_ADMIN_PW_HASH) else putString(KEY_ADMIN_PW_HASH, passwordHash)
+            }
+            .commit()
+    }
+
     fun resolveApiKey(context: Context? = appContext): String {
         val userKey = getSavedUserKey(context)
         if (userKey.isNotEmpty()) return userKey
@@ -75,7 +142,7 @@ object GeminiConfig {
 
 class GeminiTextResponse(val text: String?)
 
-/** Direct Gemini REST client with automatic model fallback and retry on 503/429. */
+/** Direct Gemini REST / Proxy client with automatic model fallback and retry on 503/429. */
 object GeminiRest {
     private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -88,14 +155,28 @@ object GeminiRest {
 
     private class RetryableGeminiException(message: String) : IllegalStateException(message)
 
-    private fun requireKey(): String {
+    private fun resolveTarget(model: String, stream: Boolean): Pair<String, String?> {
+        if (!GeminiConfig.isAiEnabled()) {
+            throw IllegalStateException("تم إيقاف خدمة الذكاء الاصطناعي مؤقتاً من قِبل مشرف التطبيق.")
+        }
+        val action = if (stream) "streamGenerateContent?alt=sse" else "generateContent"
+        val proxy = GeminiConfig.getProxyUrl().trim()
+        if (proxy.isNotEmpty()) {
+            val cleanProxy = proxy.trimEnd('/')
+            val url = if (cleanProxy.contains("/v1beta/")) {
+                "$cleanProxy/models/$model:$action"
+            } else {
+                "$cleanProxy/v1beta/models/$model:$action"
+            }
+            return url to null
+        }
         val k = GeminiConfig.resolveApiKey().trim()
         if (k.isEmpty()) {
             throw IllegalStateException(
-                "مفتاح Gemini غير موجود. انتقل إلى تبويب «المشاريع» ← «الإعدادات» وأدخل مفتاحك في حقل «مفتاح Gemini» ثم اضغط «حفظ»."
+                "خدمة الذكاء الاصطناعي غير مهيّأة بعد. يرجى من مشرف التطبيق الدخول إلى «الإعدادات» ← «لوحة تحكم المشرف» لإضافة المفتاح أو الخادم الوسيط."
             )
         }
-        return k
+        return (BASE + model + ":" + action) to k
     }
 
     private fun buildBody(prompt: String, jsonMode: Boolean): String {
@@ -137,7 +218,7 @@ object GeminiRest {
         if (code in setOf(400, 401, 403) &&
             (msg?.contains("API key", ignoreCase = true) == true || raw.contains("API_KEY_INVALID", ignoreCase = true))
         ) {
-            return "مفتاح Gemini غير صالح ($code). تأكد من نسخ المفتاح الصحيح ولصقه في «المشاريع» ← «الإعدادات» ← «مفتاح Gemini» ثم اضغط «حفظ»."
+            return "مفتاح Gemini غير صالح ($code). يمكن للمشرف تحديث المفتاح من «الإعدادات» ← «لوحة تحكم المشرف»."
         }
         return "Gemini error $code: ${if (msg.isNullOrBlank()) raw.take(300) else msg}"
     }
@@ -161,19 +242,18 @@ object GeminiRest {
     }
 
     suspend fun generate(prompt: String, jsonMode: Boolean = false): GeminiTextResponse {
-        val key = requireKey()
         val bodyJson = buildBody(prompt, jsonMode)
         val attempts = GeminiConfig.FALLBACK_MODELS + listOf(GeminiConfig.MODEL)
         var lastError: Throwable? = null
 
         for ((index, model) in attempts.withIndex()) {
             try {
-                val req = Request.Builder()
-                    .url(BASE + model + ":generateContent")
-                    .header("x-goog-api-key", key)
+                val (url, key) = resolveTarget(model, stream = false)
+                val reqBuilder = Request.Builder()
+                    .url(url)
                     .post(bodyJson.toRequestBody(JSON_TYPE))
-                    .build()
-                val resp = client.newCall(req).awaitResponse()
+                if (!key.isNullOrBlank()) reqBuilder.header("x-goog-api-key", key)
+                val resp = client.newCall(reqBuilder.build()).awaitResponse()
                 return withContext(Dispatchers.IO) {
                     resp.use {
                         val raw = it.body?.string().orEmpty()
@@ -209,7 +289,6 @@ object GeminiRest {
     }
 
     fun stream(prompt: String): Flow<String> = flow {
-        val key = requireKey()
         val bodyJson = buildBody(prompt, false)
         val attempts = GeminiConfig.FALLBACK_MODELS + listOf(GeminiConfig.MODEL)
         var lastError: Throwable? = null
@@ -217,12 +296,12 @@ object GeminiRest {
         for ((index, model) in attempts.withIndex()) {
             var emittedAny = false
             try {
-                val req = Request.Builder()
-                    .url(BASE + model + ":streamGenerateContent?alt=sse")
-                    .header("x-goog-api-key", key)
+                val (url, key) = resolveTarget(model, stream = true)
+                val reqBuilder = Request.Builder()
+                    .url(url)
                     .post(bodyJson.toRequestBody(JSON_TYPE))
-                    .build()
-                val call = client.newCall(req)
+                if (!key.isNullOrBlank()) reqBuilder.header("x-goog-api-key", key)
+                val call = client.newCall(reqBuilder.build())
                 val jobHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
                 try {
                     val resp = call.awaitResponse()

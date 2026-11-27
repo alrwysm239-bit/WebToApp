@@ -40,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,6 +85,7 @@ fun HomeScreen(
     onOpenAiStudio: (initialPrompt: String?) -> Unit,
     onOpenImportDialog: () -> Unit,
     onReopenProject: (Long) -> Unit,
+    onOpenUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
@@ -373,6 +375,32 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                         }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            Surface(
+                onClick = { onOpenUrl("https://t.me/qweqwe2019bot2bot") },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, ext.cardBorder),
+                modifier = Modifier.fillMaxWidth().testTag("home_rights_footer_card"),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = "جميع الحقوق محفوظة لصالح قناة تطبيقاتي | Apk Plus على تليجرام",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = ext.accent,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { onOpenUrl("https://t.me/Hamodi9005") }) {
+                        Text("تواصل مع المطور: @Hamodi9005", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }

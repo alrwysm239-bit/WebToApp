@@ -1,7 +1,5 @@
 package com.example.ui.screens
 
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,27 +17,26 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.UploadFile
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -60,12 +57,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.ai.GeminiConfig
@@ -76,6 +70,7 @@ import com.example.data.model.ProjectSort
 import com.example.data.model.ProjectSummary
 import com.example.data.model.ThemeMode
 import com.example.ui.WebForgeUiState
+import com.example.ui.components.AdminControlPanelDialog
 import com.example.ui.components.GlowingFrameCard
 import com.example.ui.components.GradientButton
 import com.example.ui.components.OutlinedGlowButton
@@ -110,20 +105,18 @@ fun ProjectsSettingsScreen(
     onClearAllData: () -> Unit,
     onReopenOnboarding: () -> Unit,
     onNotifyMessage: (String) -> Unit = {},
+    onOpenUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     val formatter = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()) }
 
     var searchQuery by remember { mutableStateOf("") }
     var sortBy by remember { mutableStateOf(ProjectSort.RECENT) }
     var showClearConfirm by remember { mutableStateOf(false) }
-    var savedUserGeminiKey by remember { mutableStateOf(GeminiConfig.getSavedUserKey(context)) }
-    var geminiKeyInput by remember { mutableStateOf(savedUserGeminiKey) }
-    var showGeminiKey by remember { mutableStateOf(false) }
+    var showAdminPanel by remember { mutableStateOf(false) }
 
     val displayedProjects = remember(savedProjects, searchQuery, sortBy) {
         val filtered = savedProjects.filter {
@@ -329,104 +322,32 @@ fun ProjectsSettingsScreen(
 
             GlowingFrameCard(modifier = Modifier.fillMaxWidth(), glowing = false) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Gemini API Key
-                    val hasAnyGeminiKey = savedUserGeminiKey.isNotBlank() || GeminiConfig.resolveApiKey(context).isNotBlank()
+                    // Admin-Managed Gemini AI Status & Protected Control Panel Entry (key hidden from regular users)
+                    val aiEnabled = GeminiConfig.isAiEnabled(context)
+                    val aiConfigured = GeminiConfig.getProxyUrl(context).isNotBlank() || GeminiConfig.resolveApiKey(context).isNotBlank()
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Key, null, tint = ext.accent, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.AdminPanelSettings, null, tint = ext.accent, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("مفتاح Gemini", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("الذكاء الاصطناعي وإدارة التطبيق", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(Modifier.height(8.dp))
-                    if (!hasAnyGeminiKey) {
-                        Surface(
-                            color = ext.warning.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("settings_gemini_missing_notice"),
-                        ) {
-                            Text(
-                                text = "مفتاح Gemini غير موجود حالياً. لتشغيل الذكاء الاصطناعي في التطبيق المثبّت، انسخ مفتاحك من aistudio.google.com/apikey والصقه في حقل «مفتاح Gemini» أدناه ثم اضغط «حفظ».",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ext.warning,
-                                modifier = Modifier.padding(10.dp),
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    } else {
-                        Text(
-                            text = if (savedUserGeminiKey.isNotBlank()) {
-                                "تم حفظ مفتاح Gemini محلياً في التطبيق ✓"
-                            } else {
-                                "يتم استخدام مفتاح Gemini المضمّن وقت البناء ✓ (يمكنك إدخال مفتاح خاص بك لاستبداله)"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ext.success,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                    }
-                    OutlinedTextField(
-                        value = geminiKeyInput,
-                        onValueChange = { geminiKeyInput = it },
-                        label = { Text("مفتاح Gemini") },
-                        placeholder = { Text("AIza...") },
-                        singleLine = true,
-                        visualTransformation = if (showGeminiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showGeminiKey = !showGeminiKey }) {
-                                Icon(
-                                    imageVector = if (showGeminiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                                    contentDescription = if (showGeminiKey) "إخفاء المفتاح" else "إظهار المفتاح",
-                                )
-                            }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = when {
+                            !aiEnabled -> "خدمة الذكاء الاصطناعي متوقفة مؤقتاً من لوحة تحكم المشرف."
+                            aiConfigured -> "الذكاء الاصطناعي مفعّل وجاهز للجميع ✓ (المفتاح محمي ومخفي عن المستخدمين)"
+                            else -> "إعدادات الذكاء الاصطناعي مخفية ومُدارة عبر لوحة تحكم المشرف."
                         },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("settings_gemini_key_input"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (aiEnabled && aiConfigured) ext.success else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Row(
+                    OutlinedGlowButton(
+                        text = "لوحة تحكم المشرف (حساب Google + كلمة سر)",
+                        icon = Icons.Rounded.Shield,
+                        onClick = { showAdminPanel = true },
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        GradientButton(
-                            text = "حفظ",
-                            icon = Icons.Rounded.Save,
-                            onClick = {
-                                val cleaned = geminiKeyInput.trim()
-                                geminiKeyInput = cleaned
-                                GeminiConfig.saveUserKey(cleaned, context)
-                                savedUserGeminiKey = GeminiConfig.getSavedUserKey(context)
-                                onNotifyMessage(
-                                    if (cleaned.isNotEmpty()) "تم حفظ مفتاح Gemini محلياً بنجاح"
-                                    else "تم مسح مفتاح Gemini المحفوظ",
-                                )
-                            },
-                            modifier = Modifier.weight(1f),
-                            testTag = "settings_gemini_key_save_button",
-                        )
-                        OutlinedGlowButton(
-                            text = "لصق من الحافظة",
-                            icon = Icons.Rounded.ContentPaste,
-                            onClick = {
-                                val clipText = runCatching {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    val clip = cm?.primaryClip
-                                    if (clip != null && clip.itemCount > 0) {
-                                        clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
-                                    } else {
-                                        ""
-                                    }
-                                }.getOrDefault("").ifBlank { clipboard.getText()?.text.orEmpty() }.trim()
-                                if (clipText.isNotEmpty()) {
-                                    geminiKeyInput = clipText
-                                    onNotifyMessage("تم لصق المفتاح — اضغط «حفظ»")
-                                } else {
-                                    onNotifyMessage(strings.clipboardEmptyMsg)
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            testTag = "settings_gemini_key_paste_button",
-                        )
-                    }
+                        testTag = "open_admin_panel_button",
+                    )
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ext.cardBorder)
 
@@ -555,8 +476,67 @@ fun ProjectsSettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Developer Attribution & Telegram Channels Card
+            GlowingFrameCard(modifier = Modifier.fillMaxWidth(), glowing = false) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Info, null, tint = ext.accent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("الحقوق والتواصل والاشتراك", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        text = "جميع الحقوق محفوظة لصالح قناة تطبيقاتي | Apk Plus على تليجرام",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ext.accent,
+                    )
+                    GradientButton(
+                        text = "تواصل مع المطور (تليجرام)",
+                        icon = Icons.AutoMirrored.Rounded.Send,
+                        onClick = { onOpenUrl("https://t.me/Hamodi9005") },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "developer_telegram_contact_button",
+                    )
+                    Text(
+                        text = "اشترك في قنواتنا على تليجرام:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedGlowButton(
+                        text = "قناة تطبيقاتي | Apk Plus (@qweqwe2019bot2bot)",
+                        icon = Icons.AutoMirrored.Rounded.Send,
+                        onClick = { onOpenUrl("https://t.me/qweqwe2019bot2bot") },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "channel_apk_plus_button",
+                    )
+                    OutlinedGlowButton(
+                        text = "قناة @Abu2Saleh",
+                        icon = Icons.AutoMirrored.Rounded.Send,
+                        onClick = { onOpenUrl("https://t.me/Abu2Saleh") },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "channel_abu2saleh_button",
+                    )
+                    OutlinedGlowButton(
+                        text = "قناة @pixels_x_mods_apk",
+                        icon = Icons.AutoMirrored.Rounded.Send,
+                        onClick = { onOpenUrl("https://t.me/pixels_x_mods_apk") },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "channel_pixels_mods_button",
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    if (showAdminPanel) {
+        AdminControlPanelDialog(
+            onDismiss = { showAdminPanel = false },
+            onNotifyMessage = onNotifyMessage,
+        )
     }
 
     if (showClearConfirm) {

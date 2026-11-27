@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized admin identity record keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the admin."
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified Google account email."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name from Google profile."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "AdminAiSettings": {
+      "title": "AdminAiSettings",
+      "description": "Private admin-only AI configuration and salted admin password hash.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the admin who initialized the configuration."
+        },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Verified email of the admin owner."
+        },
+        "aiEnabled": {
+          "type": "boolean",
+          "description": "Global AI feature toggle."
+        },
+        "proxyUrl": {
+          "type": "string",
+          "description": "Optional backend proxy URL for Gemini requests."
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Admin-managed Gemini API key (readable only by verified admins)."
+        },
+        "defaultModel": {
+          "type": "string",
+          "description": "Default Gemini model ID."
+        },
+        "passwordSalt": {
+          "type": "string",
+          "description": "Hex-encoded random salt for the admin control panel password."
+        },
+        "passwordHash": {
+          "type": "string",
+          "description": "SHA-256 salted hash of the admin control panel password."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": ["ownerUid", "ownerEmail", "aiEnabled", "defaultModel", "createdAt", "updatedAt"]
+    },
+    "PublicAiRuntimeConfig": {
+      "title": "PublicAiRuntimeConfig",
+      "description": "Non-secret runtime AI configuration readable by signed-in users (contains no API keys or PII).",
+      "type": "object",
+      "properties": {
+        "aiEnabled": {
+          "type": "boolean",
+          "description": "Whether Gemini AI features are enabled."
+        },
+        "proxyUrl": {
+          "type": "string",
+          "description": "Optional public backend proxy URL (no embedded secrets)."
+        },
+        "defaultModel": {
+          "type": "string",
+          "description": "Default Gemini model ID."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin who last updated this runtime config."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": ["aiEnabled", "defaultModel", "updatedBy", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized admin accounts."
+    },
+    "/admin_settings/{docId}": {
+      "schema": { "$ref": "#/entities/AdminAiSettings" },
+      "description": "Admin-only AI key, proxy settings, and salted admin password hash."
+    },
+    "/public_ai_config/{docId}": {
+      "schema": { "$ref": "#/entities/PublicAiRuntimeConfig" },
+      "description": "Non-secret runtime AI flags (aiEnabled, proxyUrl, defaultModel) for signed-in users."
+    }
+  }
+}
