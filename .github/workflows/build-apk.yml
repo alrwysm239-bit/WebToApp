@@ -1,102 +1,24 @@
-name: Build Debug APK
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-jobs:
-  build-debug-apk:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Temurin Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Verify Java environment
-        shell: bash
+      - name: Sign APK
         run: |
-          set -euo pipefail
-          java -version
-          echo "JAVA_HOME=${JAVA_HOME:-}"
-
-          VERSION_STRING=$(java -version 2>&1 | head -n 1 | sed -E 's/.*version "([^"]+)".*/\1/')
-          if [[ "$VERSION_STRING" == 1.* ]]; then
-            JAVA_MAJOR=$(echo "$VERSION_STRING" | cut -d'.' -f2)
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          PASS=webforge123
+          if [ ! -f keystore/ks.jks ]; then
+            mkdir -p keystore
+            keytool -genkeypair -keystore keystore/ks.jks -alias webforge \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass $PASS -keypass $PASS \
+              -dname "CN=WebForge, O=WebForge, C=SA"
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add keystore/ks.jks
+            git commit -m "add signing keystore"
+            git push
+          fi
+          UNSIGNED=$(find android/app/build/outputs/apk/release -name "*-unsigned.apk" 2>/dev/null | head -1)
+          if [ -n "$UNSIGNED" ]; then
+            $BT/zipalign -p -f 4 "$UNSIGNED" aligned.apk
+            $BT/apksigner sign --ks keystore/ks.jks --ks-pass pass:$PASS \
+              --ks-key-alias webforge --out WebForge.apk aligned.apk
           else
-            JAVA_MAJOR=$(echo "$VERSION_STRING" | cut -d'.' -f1 | sed 's/[^0-9].*//')
+            cp "$(find android/app/build/outputs/apk -name '*.apk' | head -1)" WebForge.apk
           fi
-
-          if [[ -z "$JAVA_MAJOR" || "$JAVA_MAJOR" -lt 17 ]]; then
-            echo "ERROR: Java 17 or newer is required, but detected major version '${JAVA_MAJOR:-unknown}' ($VERSION_STRING)." >&2
-            exit 1
-          fi
-          echo "Confirmed active Java major version: $JAVA_MAJOR"
-
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Create temporary debug keystore
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f "./debug.keystore" ]; then
-            KEYTOOL_BIN="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
-            if ! command -v "$KEYTOOL_BIN" >/dev/null 2>&1; then
-              echo "ERROR: Java 17 keytool not found." >&2
-              exit 1
-            fi
-            "$KEYTOOL_BIN" -genkeypair -v \
-              -keystore ./debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US" \
-              -noprompt >/dev/null 2>&1
-          fi
-
-          if [ ! -f "./debug.keystore" ]; then
-            echo "ERROR: Failed to create temporary ./debug.keystore." >&2
-            exit 1
-          fi
-          echo "Temporary debug keystore is ready."
-
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
-
-      - name: Verify debug APK output
-        shell: bash
-        run: |
-          set -euo pipefail
-          EXPECTED_APK="app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$EXPECTED_APK" ]; then
-            echo "ERROR: Expected debug APK was not found at $EXPECTED_APK" >&2
-            if [ -d "app/build/outputs/apk" ]; then
-              echo "Discovered APK files inside app/build/outputs/apk:" >&2
-              find app/build/outputs/apk -type f -name "*.apk" >&2 || true
-            else
-              echo "Directory app/build/outputs/apk does not exist." >&2
-            fi
-            exit 1
-          fi
-          echo "Verified debug APK at $EXPECTED_APK"
-
-      - name: Upload debug APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
