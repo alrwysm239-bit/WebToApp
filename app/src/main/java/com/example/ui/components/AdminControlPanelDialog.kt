@@ -511,6 +511,7 @@ fun AdminControlPanelDialog(
                                     proxyUrlError = msg
                                     connectionTestResult = ProxyConnectionTestResult(
                                         success = false,
+                                        model = GeminiConfig.MODEL,
                                         testedUrl = proxyUrlInput.trim(),
                                         latencyMs = 0L,
                                         message = msg,

@@ -2,12 +2,14 @@ package com.example.ai
 
 import android.content.Context
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -176,19 +179,39 @@ class GeminiTextResponse(val text: String?)
 
 data class ProxyConnectionTestResult(
     val success: Boolean,
+    val model: String,
     val testedUrl: String,
     val latencyMs: Long,
     val message: String,
 )
 
-/** OkHttp REST client routing all requests through {proxyUrl}/v1beta/models/{model}:generateContent or :streamGenerateContent?alt=sse. */
+/**
+ * OkHttp REST client routing all requests through {proxyUrl}/v1beta/models/{model}:generateContent
+ * or :streamGenerateContent?alt=sse.
+ *
+ * Streaming stops ONLY if no data arrives for 60 seconds (idle timeout), with NO 120s total cap.
+ * Test connection uses a strict 20-second timeout and reports model name + latency.
+ */
 object GeminiRest {
     private const val MAX_RETRYABLE_RETRIES = 2 // 1 initial attempt + 2 retries on 429 / 5xx / transient IO
+    private const val STREAM_IDLE_TIMEOUT_MS = 60_000L
+    private const val TEST_TIMEOUT_MS = 20_000L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
-    private val client = OkHttpClient.Builder()
+
+    // Streaming client: 60s read idle timeout, NO overall call timeout (callTimeout = 0)
+    private val streamClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
+
+    // Lightweight test-connection client: strict 20s timeout
+    private val testClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private class RetryableProxyException(message: String) : IllegalStateException(message)
@@ -216,10 +239,14 @@ object GeminiRest {
         return buildEndpointUrl(baseProxy, model, stream)
     }
 
-    private fun buildBody(prompt: String, jsonMode: Boolean): String {
+    private fun buildBody(prompt: String, jsonMode: Boolean, maxOutputTokens: Int? = null): String {
         val part = JSONObject().put("text", prompt)
         val content = JSONObject().put("parts", JSONArray().put(part))
         val root = JSONObject().put("contents", JSONArray().put(content))
+        val genConfig = JSONObject()
+        if (maxOutputTokens != null) {
+            genConfig.put("maxOutputTokens", maxOutputTokens)
+        }
         if (jsonMode) {
             val props = JSONObject()
             val names = listOf("ar", "en", "fr", "es")
@@ -228,10 +255,11 @@ object GeminiRest {
                 .put("type", "OBJECT")
                 .put("properties", props)
                 .put("required", JSONArray(names))
-            root.put(
-                "generationConfig",
-                JSONObject().put("responseMimeType", "application/json").put("responseSchema", schema),
-            )
+            genConfig.put("responseMimeType", "application/json")
+            genConfig.put("responseSchema", schema)
+        }
+        if (genConfig.length() > 0) {
+            root.put("generationConfig", genConfig)
         }
         return root.toString()
     }
@@ -281,11 +309,15 @@ object GeminiRest {
         })
     }
 
+    /**
+     * Sends a lightweight test request with a strict 20-second timeout and reports model name + latency.
+     */
     suspend fun testConnection(proxyUrlInput: String): ProxyConnectionTestResult {
         val validated = GeminiConfig.validateProxyUrl(proxyUrlInput)
         val cleanOverride = validated.getOrElse { err ->
             return ProxyConnectionTestResult(
                 success = false,
+                model = GeminiConfig.MODEL,
                 testedUrl = proxyUrlInput.trim(),
                 latencyMs = 0L,
                 message = err.localizedMessage ?: "رابط الخادم الوسيط غير صالح.",
@@ -293,97 +325,76 @@ object GeminiRest {
         }
         val effectiveProxy = cleanOverride.ifBlank { GeminiConfig.DEFAULT_PROXY_URL }
         val endpoint = buildEndpointUrl(effectiveProxy, GeminiConfig.MODEL, stream = false)
+        val bodyJson = buildBody(prompt = "Reply with OK", jsonMode = false, maxOutputTokens = 16)
         val startMs = System.currentTimeMillis()
         return try {
-            val response = generate(
-                prompt = "أجب بكلمة واحدة فقط: متصل",
-                jsonMode = false,
-                proxyOverride = effectiveProxy,
-                bypassAiEnabledGate = true,
-            )
+            val (usedModel, replyText) = withTimeout(TEST_TIMEOUT_MS) {
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .post(bodyJson.toRequestBody(JSON_TYPE))
+                    .build()
+                val resp = testClient.newCall(request).awaitResponse()
+                withContext(Dispatchers.IO) {
+                    resp.use {
+                        val raw = it.body?.string().orEmpty()
+                        if (!it.isSuccessful) {
+                            throw IllegalStateException(arabicErrorMessage(it.code, raw))
+                        }
+                        val json = JSONObject(raw)
+                        val modelVersion = json.optString("modelVersion").ifBlank { GeminiConfig.MODEL }
+                        val text = extractText(json).trim().take(40).ifBlank { "OK" }
+                        modelVersion to text
+                    }
+                }
+            }
             val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
-            val preview = response.text?.trim().orEmpty().take(60).ifBlank { "OK" }
+            val secondsFormatted = String.format(Locale.US, "%.2f", elapsed / 1000.0)
             ProxyConnectionTestResult(
                 success = true,
+                model = usedModel,
                 testedUrl = endpoint,
                 latencyMs = elapsed,
-                message = "الاتصال ناجح ✓ ($elapsed مللي ثانية) — الرد: $preview",
+                message = "الاتصال ناجح ✓\nالموديل: $usedModel\nالزمن: $elapsed مللي ثانية ($secondsFormatted ث)\nالرد: $replyText",
+            )
+        } catch (e: TimeoutCancellationException) {
+            val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+            ProxyConnectionTestResult(
+                success = false,
+                model = GeminiConfig.MODEL,
+                testedUrl = endpoint,
+                latencyMs = elapsed,
+                message = "انتهت مهلة اختبار الاتصال (20 ثانية) بدون استجابة.\nالموديل: ${GeminiConfig.MODEL} • الزمن: $elapsed مللي ثانية",
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+            val errMsg = if (e is IOException) {
+                "تعذر الاتصال بالخادم الوسيط. تحقق من الإنترنت أو رابط Proxy URL."
+            } else {
+                e.localizedMessage ?: "فشل اختبار الاتصال بالخادم الوسيط."
+            }
             ProxyConnectionTestResult(
                 success = false,
+                model = GeminiConfig.MODEL,
                 testedUrl = endpoint,
                 latencyMs = elapsed,
-                message = e.localizedMessage ?: "فشل اختبار الاتصال بالخادم الوسيط.",
+                message = "$errMsg\nالموديل: ${GeminiConfig.MODEL} • الزمن: $elapsed مللي ثانية",
             )
         }
     }
 
-    suspend fun generate(
+    /**
+     * Streams Gemini output via SSE (`streamGenerateContent?alt=sse`).
+     * Retries twice on 429 / 5xx / pre-data IO failures.
+     * Cancels ONLY if no data arrives for 60 seconds (idle timeout), with no 120s total cap.
+     */
+    fun stream(
         prompt: String,
         jsonMode: Boolean = false,
         proxyOverride: String? = null,
-        bypassAiEnabledGate: Boolean = false,
-    ): GeminiTextResponse {
+    ): Flow<String> = flow {
         val bodyJson = buildBody(prompt, jsonMode)
-        val url = if (bypassAiEnabledGate) {
-            val clean = (proxyOverride ?: GeminiConfig.resolveProxyUrl()).ifBlank { GeminiConfig.DEFAULT_PROXY_URL }
-            buildEndpointUrl(clean, GeminiConfig.MODEL, stream = false)
-        } else {
-            resolveTargetUrl(GeminiConfig.MODEL, stream = false, proxyOverride = proxyOverride)
-        }
-
-        var lastError: Throwable? = null
-        val totalAttempts = 1 + MAX_RETRYABLE_RETRIES
-        for (attempt in 0 until totalAttempts) {
-            try {
-                val request = Request.Builder()
-                    .url(url)
-                    .post(bodyJson.toRequestBody(JSON_TYPE))
-                    .build()
-                val resp = client.newCall(request).awaitResponse()
-                return withContext(Dispatchers.IO) {
-                    resp.use {
-                        val raw = it.body?.string().orEmpty()
-                        if (!it.isSuccessful) {
-                            val msg = arabicErrorMessage(it.code, raw)
-                            if (isRetryableHttpCode(it.code)) {
-                                throw RetryableProxyException(msg)
-                            }
-                            throw IllegalStateException(msg)
-                        }
-                        GeminiTextResponse(extractText(JSONObject(raw)))
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: RetryableProxyException) {
-                lastError = e
-                if (attempt < MAX_RETRYABLE_RETRIES) {
-                    delay(800L * (attempt + 1))
-                }
-            } catch (e: IOException) {
-                lastError = IllegalStateException(
-                    "تعذر الاتصال بخادم الذكاء الاصطناعي. تحقق من الإنترنت أو رابط الخادم ثم أعد المحاولة.",
-                    e,
-                )
-                if (attempt < MAX_RETRYABLE_RETRIES) {
-                    delay(800L * (attempt + 1))
-                }
-            }
-        }
-
-        throw IllegalStateException(
-            lastError?.message ?: "خادم الذكاء الاصطناعي غير متاح مؤقتاً. يرجى إعادة المحاولة.",
-            lastError,
-        )
-    }
-
-    fun stream(prompt: String, proxyOverride: String? = null): Flow<String> = flow {
-        val bodyJson = buildBody(prompt, false)
         val url = resolveTargetUrl(GeminiConfig.MODEL, stream = true, proxyOverride = proxyOverride)
 
         var lastError: Throwable? = null
@@ -395,10 +406,17 @@ object GeminiRest {
                     .url(url)
                     .post(bodyJson.toRequestBody(JSON_TYPE))
                     .build()
-                val call = client.newCall(request)
+                val call = streamClient.newCall(request)
                 val jobHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
                 try {
-                    val resp = call.awaitResponse()
+                    val resp = try {
+                        withTimeout(STREAM_IDLE_TIMEOUT_MS) { call.awaitResponse() }
+                    } catch (e: TimeoutCancellationException) {
+                        call.cancel()
+                        throw RetryableProxyException(
+                            "لم تصل أي بيانات من الخادم لمدة 60 ثانية. يرجى إعادة المحاولة."
+                        )
+                    }
                     resp.use {
                         if (!it.isSuccessful) {
                             val raw = it.body?.string().orEmpty()
@@ -410,11 +428,37 @@ object GeminiRest {
                         }
                         val source = it.body?.source()
                             ?: throw RetryableProxyException("استجابة فارغة من خادم الذكاء الاصطناعي. يرجى إعادة المحاولة.")
+                        var lastDataAtMs = System.currentTimeMillis()
                         while (true) {
-                            val line = source.readUtf8Line() ?: break
+                            val line = try {
+                                withTimeout(STREAM_IDLE_TIMEOUT_MS) {
+                                    withContext(Dispatchers.IO) { source.readUtf8Line() }
+                                }
+                            } catch (e: TimeoutCancellationException) {
+                                call.cancel()
+                                throw if (!emittedAny) {
+                                    RetryableProxyException(
+                                        "لم تصل أي بيانات من الخادم لمدة 60 ثانية. يرجى إعادة المحاولة."
+                                    )
+                                } else {
+                                    IllegalStateException(
+                                        "توقف تدفق البيانات من الخادم لمدة 60 ثانية. يرجى إعادة المحاولة."
+                                    )
+                                }
+                            } ?: break
+
+                            if (System.currentTimeMillis() - lastDataAtMs > STREAM_IDLE_TIMEOUT_MS) {
+                                call.cancel()
+                                throw IllegalStateException(
+                                    "توقف تدفق البيانات من الخادم لمدة 60 ثانية. يرجى إعادة المحاولة."
+                                )
+                            }
+
                             if (!line.startsWith("data:")) continue
                             val data = line.substring(5).trim()
                             if (data.isEmpty() || data == "[DONE]") continue
+                            lastDataAtMs = System.currentTimeMillis()
+
                             val obj = JSONObject(data)
                             if (obj.has("error")) {
                                 val errObj = obj.optJSONObject("error")
@@ -438,6 +482,17 @@ object GeminiRest {
                     return@flow
                 } finally {
                     jobHandle?.dispose()
+                }
+            } catch (e: TimeoutCancellationException) {
+                // Any unhandled idle timeout maps cleanly rather than silently cancelling
+                val err = IllegalStateException(
+                    "لم تصل أي بيانات من الخادم لمدة 60 ثانية. يرجى إعادة المحاولة.",
+                    e,
+                )
+                if (emittedAny) throw err
+                lastError = err
+                if (attempt < MAX_RETRYABLE_RETRIES) {
+                    delay(800L * (attempt + 1))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -466,4 +521,12 @@ object GeminiRest {
             lastError,
         )
     }.flowOn(Dispatchers.IO)
+
+    suspend fun generate(prompt: String, jsonMode: Boolean = false): GeminiTextResponse {
+        val sb = StringBuilder()
+        stream(prompt = prompt, jsonMode = jsonMode).collect { chunk ->
+            sb.append(chunk)
+        }
+        return GeminiTextResponse(sb.toString())
+    }
 }

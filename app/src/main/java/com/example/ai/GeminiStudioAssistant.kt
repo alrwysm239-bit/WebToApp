@@ -2,10 +2,8 @@ package com.example.ai
 
 import android.util.Log
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
 private const val TAG = "GeminiStudioAssistant"
@@ -66,23 +64,17 @@ class GeminiStudioAssistant {
 
         val acc = StringBuilder()
         try {
-            withTimeout(120_000L) {
-                GeminiRest.stream(prompt).collect { chunk ->
-                    val piece = chunk
-                    if (piece.isNotEmpty()) {
-                        acc.append(piece)
-                        emit(acc.toString())
-                    }
+            GeminiRest.stream(prompt).collect { chunk ->
+                if (chunk.isNotEmpty()) {
+                    acc.append(chunk)
+                    emit(acc.toString())
                 }
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "Gemini site generation timed out", e)
-            throw IllegalStateException("AI request timed out after 120s. Please retry.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Gemini site generation failed", e)
-            throw IllegalStateException(e.localizedMessage ?: "Gemini AI failed.", e)
+            throw IllegalStateException(e.localizedMessage ?: "فشل إنشاء التطبيق بالذكاء الاصطناعي.", e)
         }
     }
 
@@ -131,11 +123,9 @@ class GeminiStudioAssistant {
         }
 
         return try {
-            val response = withTimeout(120_000L) {
-                GeminiRest.generate(prompt)
-            }
+            val response = GeminiRest.generate(prompt)
             val raw = response.text?.trim().orEmpty()
-            if (raw.isEmpty()) throw IllegalStateException("Empty response from Gemini.")
+            if (raw.isEmpty()) throw IllegalStateException("استجابة فارغة من خادم الذكاء الاصطناعي.")
             if (expectsCode) {
                 val cleanHtml = stripCodeFence(raw)
                 val summary = if (preferArabic) "تم تجهيز التعديلات. راجع الفروقات قبل التطبيق." else "Proposed changes ready. Review diff before applying."
@@ -143,14 +133,11 @@ class GeminiStudioAssistant {
             } else {
                 raw to null
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "Quick transform timed out", e)
-            throw IllegalStateException("AI request timed out after 120s.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Quick transform failed", e)
-            throw IllegalStateException(e.localizedMessage ?: "AI operation failed.", e)
+            throw IllegalStateException(e.localizedMessage ?: "فشل تنفيذ الأمر الذكي.", e)
         }
     }
 
@@ -174,11 +161,9 @@ class GeminiStudioAssistant {
         """.trimIndent()
 
         return try {
-            val response = withTimeout(120_000L) {
-                GeminiRest.generate(prompt)
-            }
+            val response = GeminiRest.generate(prompt)
             val raw = response.text?.trim().orEmpty()
-            if (raw.isEmpty()) throw IllegalStateException("Empty response from Gemini.")
+            if (raw.isEmpty()) throw IllegalStateException("استجابة فارغة من خادم الذكاء الاصطناعي.")
             val startIdx = raw.indexOf("<<<CODE>>>")
             val endIdx = raw.indexOf("<<<END_CODE>>>")
             if (startIdx >= 0 && endIdx > startIdx) {
@@ -189,14 +174,11 @@ class GeminiStudioAssistant {
             } else {
                 raw to null
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI chat timed out", e)
-            throw IllegalStateException("AI chat timed out after 120s.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "AI chat failed", e)
-            throw IllegalStateException(e.localizedMessage ?: "AI chat failed.", e)
+            throw IllegalStateException(e.localizedMessage ?: "تعذر إكمال المحادثة الذكية.", e)
         }
     }
 
@@ -207,10 +189,8 @@ class GeminiStudioAssistant {
         """.trimIndent()
 
         return try {
-            val response = withTimeout(120_000L) {
-                GeminiRest.generate(prompt, jsonMode = true)
-            }
-            val jsonText = response.text ?: throw IllegalStateException("Empty AI JSON response.")
+            val response = GeminiRest.generate(prompt, jsonMode = true)
+            val jsonText = response.text ?: throw IllegalStateException("استجابة JSON فارغة من الذكاء الاصطناعي.")
             val json = JSONObject(jsonText)
             StoreDescriptionsResult(
                 ar = json.getString("ar"),
@@ -218,14 +198,11 @@ class GeminiStudioAssistant {
                 fr = json.getString("fr"),
                 es = json.getString("es"),
             )
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "Store description generation timed out", e)
-            throw IllegalStateException("AI store description timed out.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Store description generation failed", e)
-            throw IllegalStateException(e.localizedMessage ?: "Failed to generate store descriptions.", e)
+            throw IllegalStateException(e.localizedMessage ?: "فشل إنشاء أوصاف المتجر.", e)
         }
     }
 
