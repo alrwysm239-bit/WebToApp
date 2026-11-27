@@ -33,18 +33,23 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.InstallMobile
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PhoneIphone
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -75,6 +80,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.model.AppExportConfig
+import com.example.data.model.AppOrientation
+import com.example.data.model.AppSourceMode
 import com.example.data.model.ProjectAsset
 import com.example.domain.QrCodeGenerator
 import com.example.domain.ZipArchiveManager
@@ -161,6 +168,11 @@ fun PwaSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IosDesktopSheet(
+    config: AppExportConfig,
+    publishedUrl: String?,
+    isRtl: Boolean,
+    onConfigChange: ((AppExportConfig) -> AppExportConfig) -> Unit,
+    onExportIosWebClip: (saveToDevice: Boolean) -> Unit,
     onExportIosZip: (saveToDevice: Boolean) -> Unit,
     onExportElectronZip: (saveToDevice: Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -176,36 +188,120 @@ fun IosDesktopSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(strings.iosDesktopTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(strings.iosDesktopSubtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+            // Source Mode: HTML vs Website URL
+            Text(strings.sourceModeLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = config.sourceMode == AppSourceMode.HTML,
+                    onClick = { onConfigChange { it.copy(sourceMode = AppSourceMode.HTML) } },
+                    label = { Text(strings.sourceHtmlMode) },
+                )
+                FilterChip(
+                    selected = config.sourceMode == AppSourceMode.URL,
+                    onClick = {
+                        onConfigChange {
+                            it.copy(sourceMode = AppSourceMode.URL, sourceUrl = it.sourceUrl.ifBlank { publishedUrl.orEmpty() })
+                        }
+                    },
+                    label = { Text(strings.sourceUrlMode) },
+                )
+            }
+
+            if (config.sourceMode == AppSourceMode.URL) {
+                OutlinedTextField(
+                    value = config.sourceUrl,
+                    onValueChange = { v -> onConfigChange { it.copy(sourceUrl = v) } },
+                    label = { Text(strings.sourceUrlInputLabel) },
+                    leadingIcon = { Icon(Icons.Rounded.Link, null, tint = ext.accent) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppIconPreview(
+                    customIconBase64 = config.customIconBase64,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)),
+                )
+                OutlinedTextField(
+                    value = config.appName,
+                    onValueChange = { v -> onConfigChange { it.copy(appName = v) } },
+                    label = { Text(strings.appDisplayNameLabel) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(config.orientation == AppOrientation.AUTO, { onConfigChange { it.copy(orientation = AppOrientation.AUTO) } }, { Text(strings.orientationAuto) })
+                FilterChip(config.orientation == AppOrientation.PORTRAIT, { onConfigChange { it.copy(orientation = AppOrientation.PORTRAIT) } }, { Text(strings.orientationPortrait) })
+                FilterChip(config.orientation == AppOrientation.LANDSCAPE, { onConfigChange { it.copy(orientation = AppOrientation.LANDSCAPE) } }, { Text(strings.orientationLandscape) })
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(if (isRtl) "شاشة كاملة للآيفون (Fullscreen)" else "iOS Fullscreen Mode", style = MaterialTheme.typography.bodySmall)
+                Switch(checked = config.fullscreen, onCheckedChange = { v -> onConfigChange { it.copy(fullscreen = v) } })
+            }
+
+            Surface(
+                color = ext.accent.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, ext.accent.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = strings.iosDirectProfileNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ext.accent,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+
             GradientButton(
-                text = "Export Capacitor iOS (.zip)",
+                text = strings.iosDirectProfileBtn,
+                icon = Icons.Rounded.PhoneIphone,
+                brush = MintCtaBrush,
+                contentColor = Color(0xFF0C0A20),
+                onClick = { onExportIosWebClip(true) },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "export_ios_webclip_button",
+            )
+            OutlinedGlowButton(
+                text = if (isRtl) "مشاركة ملف التثبيت المباشر (.mobileconfig)" else "Share Direct iOS App (.mobileconfig)",
+                icon = Icons.Rounded.Share,
+                onClick = { onExportIosWebClip(false) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            GradientButton(
+                text = if (isRtl) "تصدير مشروع Xcode / Capacitor iOS (.zip)" else "Export Xcode / Capacitor iOS (.zip)",
                 icon = Icons.Rounded.PhoneIphone,
                 onClick = { onExportIosZip(true) },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedGlowButton(
-                text = "Share Capacitor iOS (.zip)",
+                text = if (isRtl) "مشاركة مشروع Xcode iOS (.zip)" else "Share Xcode / Capacitor iOS (.zip)",
                 icon = Icons.Rounded.Share,
                 onClick = { onExportIosZip(false) },
                 modifier = Modifier.fillMaxWidth(),
             )
-            GradientButton(
+            OutlinedGlowButton(
                 text = "Export Electron Desktop (.zip)",
                 icon = Icons.Rounded.DesktopWindows,
-                brush = MintCtaBrush,
-                contentColor = Color(0xFF0C0A20),
                 onClick = { onExportElectronZip(true) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedGlowButton(
-                text = "Share Electron Desktop (.zip)",
-                icon = Icons.Rounded.Share,
-                onClick = { onExportElectronZip(false) },
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(16.dp))
@@ -387,29 +483,48 @@ fun AppShellPreviewDialog(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
-    var showSplash by remember { mutableStateOf(true) }
-    val bgColor = remember(config.themeColorHex) {
-        runCatching { Color(android.graphics.Color.parseColor(config.themeColorHex)) }
+    var showSplash by remember { mutableStateOf(config.splashEnabled) }
+    var simulatedLandscape by remember { mutableStateOf(config.orientation == AppOrientation.LANDSCAPE) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    val splashBg = remember(config.splashBgColorHex) {
+        runCatching { Color(android.graphics.Color.parseColor(config.splashBgColorHex)) }
             .getOrDefault(Color(0xFF0C0A20))
     }
+    val accentBg = remember(config.themeColorHex) {
+        runCatching { Color(android.graphics.Color.parseColor(config.themeColorHex)) }
+            .getOrDefault(Color(0xFF5B3DF5))
+    }
 
-    LaunchedEffect(Unit) {
-        delay(1300)
-        showSplash = false
+    LaunchedEffect(config.splashEnabled, config.splashDurationMs) {
+        if (config.splashEnabled) {
+            delay(config.splashDurationMs.toLong().coerceIn(500L, 4500L))
+            showSplash = false
+        }
     }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(modifier = Modifier.fillMaxSize().background(bgColor)) {
+        Box(modifier = Modifier.fillMaxSize().background(splashBg)) {
             val latestAssets = remember(assets) { assets.associateBy { it.path.lowercase().trimStart('/') } }
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        webViewRef = this
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.builtInZoomControls = config.enableZoom
+                        settings.displayZoomControls = false
+                        if (config.desktopMode) {
+                            settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                        } else if (config.customUserAgent.isNotBlank()) {
+                            settings.userAgentString = config.customUserAgent
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                                 val url = request?.url ?: return null
@@ -422,19 +537,43 @@ fun AppShellPreviewDialog(
                                 return super.shouldInterceptRequest(view, request)
                             }
                         }
-                        loadDataWithBaseURL("https://webforge.local/", html, "text/html", "UTF-8", null)
+                        if (config.sourceMode == AppSourceMode.URL && config.sourceUrl.isNotBlank()) {
+                            val u = config.sourceUrl.trim()
+                            loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
+                        } else {
+                            loadDataWithBaseURL("https://webforge.local/", html, "text/html", "UTF-8", null)
+                        }
                     }
                 },
             )
 
             if (showSplash) {
-                Box(modifier = Modifier.fillMaxSize().background(bgColor), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.fillMaxSize().background(splashBg), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         AppIconPreview(config.customIconBase64, Modifier.size(92.dp).clip(RoundedCornerShape(22.dp)))
                         Spacer(Modifier.height(14.dp))
-                        Text(config.appName, style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(config.splashTitle.ifBlank { config.appName }, style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
-                        Text(strings.splashPreviewLabel, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
+                        Text(config.splashSubtitle.ifBlank { strings.splashPreviewLabel }, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f))
+                        Spacer(Modifier.height(14.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = accentBg, strokeWidth = 2.5.dp)
+                    }
+                }
+            }
+
+            if (config.showFloatingBar) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.72f),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { simulatedLandscape = !simulatedLandscape }) {
+                            Icon(Icons.Rounded.ScreenRotation, strings.rotateScreen, tint = if (simulatedLandscape) accentBg else Color.White, modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { webViewRef?.reload() }) {
+                            Icon(Icons.Rounded.Refresh, strings.reloadPreview, tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }

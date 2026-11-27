@@ -72,11 +72,17 @@ fun ExportScreen(
     state: WebForgeUiState,
     autoOpenFreeDeploy: Boolean = false,
     onConsumeAutoOpenFreeDeploy: () -> Unit = {},
+    autoOpenApkBuilder: Boolean = false,
+    onConsumeAutoOpenApkBuilder: () -> Unit = {},
+    autoOpenIosBuilder: Boolean = false,
+    onConsumeAutoOpenIosBuilder: () -> Unit = {},
     onPublishFreeNow: () -> Unit = {},
     onExportWebsiteZip: (includePwa: Boolean, saveToDevice: Boolean) -> Unit,
     onExportSingleHtml: (saveToDevice: Boolean) -> Unit,
+    onBuildDirectApk: (saveToDevice: Boolean) -> Unit,
     onExportAndroidZip: (saveToDevice: Boolean) -> Unit,
     onExportKeystoreGuide: (saveToDevice: Boolean) -> Unit,
+    onExportIosWebClip: (saveToDevice: Boolean) -> Unit,
     onExportIosZip: (saveToDevice: Boolean) -> Unit,
     onExportElectronZip: (saveToDevice: Boolean) -> Unit,
     onExportStorePack: (includeAiDescriptions: Boolean, saveToDevice: Boolean) -> Unit,
@@ -111,6 +117,20 @@ fun ExportScreen(
             showWebsiteSheet = true
             onConsumeAutoOpenFreeDeploy()
             onPublishFreeNow()
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(autoOpenApkBuilder) {
+        if (autoOpenApkBuilder) {
+            showAndroidSheet = true
+            onConsumeAutoOpenApkBuilder()
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(autoOpenIosBuilder) {
+        if (autoOpenIosBuilder) {
+            showIosDesktopSheet = true
+            onConsumeAutoOpenIosBuilder()
         }
     }
 
@@ -307,10 +327,13 @@ fun ExportScreen(
     if (showAndroidSheet) {
         AndroidConfigSheet(
             config = state.appConfig,
+            publishedUrl = state.publishedUrl,
+            isBuildingApk = state.isBuildingApk,
             isRtl = state.settings.language.isRtl,
             onConfigChange = onUpdateAppConfig,
             onPickCustomIcon = onPickCustomIcon,
             onResetDefaultIcon = onResetDefaultIcon,
+            onBuildDirectApk = onBuildDirectApk,
             onExportAndroidProject = onExportAndroidZip,
             onExportKeystoreGuide = onExportKeystoreGuide,
             onPreviewAppShell = {
@@ -323,6 +346,11 @@ fun ExportScreen(
 
     if (showIosDesktopSheet) {
         IosDesktopSheet(
+            config = state.appConfig,
+            publishedUrl = state.publishedUrl,
+            isRtl = state.settings.language.isRtl,
+            onConfigChange = onUpdateAppConfig,
+            onExportIosWebClip = onExportIosWebClip,
             onExportIosZip = onExportIosZip,
             onExportElectronZip = onExportElectronZip,
             onDismiss = { showIosDesktopSheet = false },

@@ -21,11 +21,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddCircleOutline
+import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.FolderCopy
+import androidx.compose.material.icons.rounded.PhoneIphone
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
@@ -72,6 +74,8 @@ fun HomeScreen(
     onNewBlankProject: () -> Unit,
     onContinueEditor: () -> Unit,
     onPublishFreeClick: () -> Unit,
+    onOpenApkBuilder: () -> Unit,
+    onOpenIosBuilder: () -> Unit,
     onOpenProjects: () -> Unit,
     onOpenTemplates: () -> Unit,
     onOpenToolsHub: () -> Unit,
@@ -227,6 +231,28 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f).testTag("home_import_card"),
                 )
             }
+
+            Spacer(Modifier.height(10.dp))
+
+            HubTileCard(
+                title = strings.homeBuildApkTitle,
+                subtitle = strings.homeBuildApkSubtitle,
+                icon = Icons.Rounded.Android,
+                accent = WebForgeSuccess,
+                onClick = onOpenApkBuilder,
+                modifier = Modifier.fillMaxWidth().testTag("home_build_apk_card"),
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            HubTileCard(
+                title = strings.homeBuildIosTitle,
+                subtitle = strings.homeBuildIosSubtitle,
+                icon = Icons.Rounded.PhoneIphone,
+                accent = WebForgeAccent,
+                onClick = onOpenIosBuilder,
+                modifier = Modifier.fillMaxWidth().testTag("home_build_ios_card"),
+            )
 
             Spacer(Modifier.height(10.dp))
 

@@ -126,6 +126,8 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
     var showToolsHubSheet by remember { mutableStateOf(false) }
     var showPreviewQrDialog by remember { mutableStateOf(false) }
     var pendingAutoFreeDeploy by remember { mutableStateOf(false) }
+    var pendingAutoApkBuilder by remember { mutableStateOf(false) }
+    var pendingAutoIosBuilder by remember { mutableStateOf(false) }
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -352,6 +354,14 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                             pendingAutoFreeDeploy = true
                                             navigateToTab(ROUTE_EXPORT)
                                         },
+                                        onOpenApkBuilder = {
+                                            pendingAutoApkBuilder = true
+                                            navigateToTab(ROUTE_EXPORT)
+                                        },
+                                        onOpenIosBuilder = {
+                                            pendingAutoIosBuilder = true
+                                            navigateToTab(ROUTE_EXPORT)
+                                        },
                                         onOpenProjects = { navigateToTab(ROUTE_PROJECTS) },
                                         onOpenTemplates = { showTemplatesSheet = true },
                                         onOpenToolsHub = { showToolsHubSheet = true },
@@ -427,11 +437,17 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                         state = state,
                                         autoOpenFreeDeploy = pendingAutoFreeDeploy,
                                         onConsumeAutoOpenFreeDeploy = { pendingAutoFreeDeploy = false },
+                                        autoOpenApkBuilder = pendingAutoApkBuilder,
+                                        onConsumeAutoOpenApkBuilder = { pendingAutoApkBuilder = false },
+                                        autoOpenIosBuilder = pendingAutoIosBuilder,
+                                        onConsumeAutoOpenIosBuilder = { pendingAutoIosBuilder = false },
                                         onPublishFreeNow = viewModel::publishFreeWithoutToken,
                                         onExportWebsiteZip = viewModel::exportWebsiteZip,
                                         onExportSingleHtml = viewModel::exportSingleSelfContainedHtml,
+                                        onBuildDirectApk = viewModel::buildDirectApk,
                                         onExportAndroidZip = viewModel::exportAndroidWebViewProject,
                                         onExportKeystoreGuide = viewModel::exportKeystoreGuideZip,
+                                        onExportIosWebClip = viewModel::exportIosWebClip,
                                         onExportIosZip = viewModel::exportIosCapacitorZip,
                                         onExportElectronZip = viewModel::exportElectronDesktopZip,
                                         onExportStorePack = viewModel::exportStorePackZip,

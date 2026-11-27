@@ -1,30 +1,37 @@
 package com.example.ui.components
 
+import android.graphics.Typeface
+import android.text.Editable
+import android.text.InputType
+import android.text.Spannable
+import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Redo
 import androidx.compose.material.icons.automirrored.rounded.Undo
@@ -33,6 +40,7 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.FindReplace
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,83 +50,35 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.model.CodeIssue
 import com.example.data.model.EditorTheme
 import com.example.ui.i18n.LocalStrings
 import com.example.ui.theme.LocalWebForgeColors
 import com.example.ui.theme.MonoFontFamily
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
-class CodeSyntaxTransformation(
-    private val tagColor: Color,
-    private val attrNameColor: Color,
-    private val attrValueColor: Color,
-    private val commentColor: Color,
-    private val keywordColor: Color,
-) : VisualTransformation {
-
-    override fun filter(text: AnnotatedString): TransformedText {
-        val raw = text.text
-        val highlighted = buildAnnotatedString {
-            append(raw)
-
-            Regex(""""[^"\n]*"|'[^'\n]*'""").findAll(raw).forEach { m ->
-                addStyle(SpanStyle(color = attrValueColor), m.range.first, m.range.last + 1)
-            }
-
-            Regex("""</?[a-zA-Z0-9:-]+|/?>""").findAll(raw).forEach { m ->
-                addStyle(
-                    SpanStyle(color = tagColor, fontWeight = FontWeight.Medium),
-                    m.range.first,
-                    m.range.last + 1,
-                )
-            }
-
-            Regex("""\s([a-zA-Z0-9:-]+)(?==)""").findAll(raw).forEach { m ->
-                val group = m.groups[1] ?: return@forEach
-                addStyle(SpanStyle(color = attrNameColor), group.range.first, group.range.last + 1)
-            }
-
-            Regex("""\b(function|const|let|var|return|if|else|document|window|console|flex|grid|linear-gradient|important)\b""")
-                .findAll(raw)
-                .forEach { m ->
-                    addStyle(SpanStyle(color = keywordColor), m.range.first, m.range.last + 1)
-                }
-
-            Regex("""<!--[\s\S]*?-->|/\*[\s\S]*?\*/""").findAll(raw).forEach { m ->
-                addStyle(SpanStyle(color = commentColor), m.range.first, m.range.last + 1)
-            }
-        }
-        return TransformedText(highlighted, OffsetMapping.Identity)
-    }
-}
+private const val SYNTAX_HIGHLIGHT_MAX_CHARS = 16_000
 
 private data class EditorPalette(
     val bg: Color,
@@ -129,6 +89,16 @@ private data class EditorPalette(
     val value: Color,
     val comment: Color,
     val keyword: Color,
+)
+
+private data class SyntaxSpanRange(val start: Int, val end: Int, val color: Int)
+
+private class NativeCodeHolder(
+    val editText: EditText,
+    val gutterView: TextView,
+    var suppressWatcher: Boolean = false,
+    var lastKnownText: String = "",
+    var lastGutterLines: Int = -1,
 )
 
 @Composable
@@ -150,11 +120,7 @@ fun CodeEditorCard(
 ) {
     val ext = LocalWebForgeColors.current
     val strings = LocalStrings.current
-    val lineCount = remember(code) { code.count { it == '\n' } + 1 }
-    val verticalScroll = rememberScrollState()
-    val horizontalScroll = rememberScrollState()
-    val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
+    val isFastMode = code.length > SYNTAX_HIGHLIGHT_MAX_CHARS
 
     var showSearchReplace by remember { mutableStateOf(false) }
     var showEmmetBar by remember { mutableStateOf(false) }
@@ -162,6 +128,9 @@ fun CodeEditorCard(
     var searchQuery by remember { mutableStateOf("") }
     var replaceQuery by remember { mutableStateOf("") }
     var emmetQuery by remember { mutableStateOf("div.card>h2+p") }
+    var holderRef by remember { mutableStateOf<NativeCodeHolder?>(null) }
+
+    val latestOnCodeChange by rememberUpdatedState(onCodeChange)
 
     val palette = remember(editorTheme, ext) {
         when (editorTheme) {
@@ -208,30 +177,66 @@ fun CodeEditorCard(
         }
     }
 
-    val syntaxTransformation = remember(palette) {
-        CodeSyntaxTransformation(
-            tagColor = palette.tag,
-            attrNameColor = palette.attr,
-            attrValueColor = palette.value,
-            commentColor = palette.comment,
-            keywordColor = palette.keyword,
-        )
-    }
-
     val effectiveTextColor = if (editorTheme == EditorTheme.WEBFORGE_MIDNIGHT && !ext.isDark) {
         MaterialTheme.colorScheme.onSurface
     } else palette.text
 
-    val codeTextStyle = TextStyle(
-        fontFamily = MonoFontFamily,
-        fontSize = fontSizeSp.sp,
-        lineHeight = (fontSizeSp + 6).sp,
-        color = effectiveTextColor,
-        textDirection = TextDirection.Ltr,
-    )
+    // Debounced async syntax highlighting (only for <= 16KB; skips large files for 0-lag pasting/scrolling)
+    LaunchedEffect(code, palette, holderRef) {
+        val holder = holderRef ?: return@LaunchedEffect
+        val gutterUpdate = withContext(Dispatchers.Default) {
+            val lineCount = if (code.isEmpty()) 1 else code.count { it == '\n' } + 1
+            if (holder.lastGutterLines == lineCount) null
+            else {
+                val capped = lineCount.coerceAtMost(2500)
+                lineCount to buildString(capped * 4) {
+                    for (i in 1..capped) {
+                        append(i)
+                        if (i < capped) append('\n')
+                    }
+                    if (lineCount > capped) append("\n...")
+                }
+            }
+        }
+        if (gutterUpdate != null) {
+            holder.lastGutterLines = gutterUpdate.first
+            holder.gutterView.text = gutterUpdate.second
+        }
+
+        val editable = holder.editText.text ?: return@LaunchedEffect
+        if (code.isEmpty() || code.length > SYNTAX_HIGHLIGHT_MAX_CHARS) {
+            // Strip any previous spans cleanly if switching into large fast mode
+            val existing = editable.getSpans(0, editable.length, ForegroundColorSpan::class.java)
+            if (existing.isNotEmpty()) {
+                existing.forEach { editable.removeSpan(it) }
+            }
+            return@LaunchedEffect
+        }
+
+        delay(140)
+        val spans = withContext(Dispatchers.Default) {
+            computeSyntaxSpans(code, palette)
+        }
+        val currentEditable = holder.editText.text ?: return@LaunchedEffect
+        if (currentEditable.length == code.length) {
+            currentEditable.getSpans(0, currentEditable.length, ForegroundColorSpan::class.java).forEach {
+                currentEditable.removeSpan(it)
+            }
+            spans.forEach { sp ->
+                if (sp.start >= 0 && sp.end <= currentEditable.length && sp.start < sp.end) {
+                    currentEditable.setSpan(
+                        ForegroundColorSpan(sp.color),
+                        sp.start,
+                        sp.end,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
+            }
+        }
+    }
 
     Column(modifier = modifier) {
-        // Editor Micro-Toolbar (Paste, Undo, Redo, Find & Replace, Emmet, Lint)
+        // Editor Micro-Toolbar (Paste, Undo, Redo, Find & Replace, Emmet, Lint, Fast Mode indicator)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -253,6 +258,28 @@ fun CodeEditorCard(
                 ) {
                     Icon(Icons.Rounded.ContentPaste, null, tint = ext.accent, modifier = Modifier.size(15.dp))
                     Text(strings.pasteHtmlCode, style = MaterialTheme.typography.labelSmall, color = ext.accent, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (isFastMode) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = ext.success.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, ext.success.copy(alpha = 0.5f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(Icons.Rounded.Speed, null, tint = ext.success, modifier = Modifier.size(14.dp))
+                        Text(
+                            text = "${code.length / 1024} KB ⚡",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ext.success,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
 
@@ -366,15 +393,6 @@ fun CodeEditorCard(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        val matchCount = remember(code, searchQuery) {
-                            if (searchQuery.isEmpty()) 0 else code.windowed(searchQuery.length).count { it.equals(searchQuery, true) }
-                        }
-                        Text(
-                            text = "$matchCount matches",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ext.accent,
-                            modifier = Modifier.align(Alignment.CenterVertically).padding(end = 8.dp),
-                        )
                         TextButton(
                             onClick = {
                                 if (searchQuery.isNotEmpty()) {
@@ -451,93 +469,151 @@ fun CodeEditorCard(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Code editor is always LTR; full-area tap focuses BasicTextField and opens soft keyboard reliably
+        // Native Android EditText inside a hardware-accelerated ScrollView for instant keyboard,
+        // native keyboard clipboard paste, and 0-ANR editing even for 300KB+ HTML files.
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             GlowingFrameCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 230.dp, max = 330.dp),
+                    .height(275.dp),
                 containerColor = palette.bg,
             ) {
-                BoxWithConstraints(
+                val bgArgb = palette.bg.toArgb()
+                val gutterArgb = palette.gutter.toArgb()
+                val textArgb = effectiveTextColor.toArgb()
+                val commentArgb = palette.comment.toArgb()
+
+                AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 230.dp, max = 330.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            focusRequester.requestFocus()
-                            keyboardController?.show()
-                        },
-                ) {
-                    val minEditableWidth = (maxWidth - 48.dp).coerceAtLeast(220.dp)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 230.dp)
-                            .verticalScroll(verticalScroll),
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .background(palette.gutter)
-                                .defaultMinSize(minHeight = 230.dp)
-                                .padding(horizontal = 10.dp, vertical = 12.dp),
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            for (line in 1..lineCount) {
-                                Text(
-                                    text = line.toString(),
-                                    style = codeTextStyle.copy(
-                                        color = palette.comment,
-                                        fontSize = (fontSizeSp - 1).coerceAtLeast(9).sp,
-                                    ),
-                                )
+                        .height(275.dp)
+                        .testTag("html_code_editor"),
+                    factory = { ctx ->
+                        val density = ctx.resources.displayMetrics.density
+                        fun dp(v: Int) = (v * density).toInt()
+
+                        val vScroll = ScrollView(ctx).apply {
+                            isFillViewport = true
+                            setBackgroundColor(bgArgb)
+                            isVerticalScrollBarEnabled = true
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                        }
+
+                        val row = LinearLayout(ctx).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            )
+                        }
+
+                        val gutterView = TextView(ctx).apply {
+                            setBackgroundColor(gutterArgb)
+                            setTextColor(commentArgb)
+                            typeface = Typeface.MONOSPACE
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
+                            gravity = Gravity.END
+                            setPadding(dp(8), dp(12), dp(8), dp(12))
+                            setLineSpacing(dp(4).toFloat(), 1f)
+                            text = "1"
+                            minWidth = dp(38)
+                            layoutParams = LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                        }
+
+                        val hScroll = HorizontalScrollView(ctx).apply {
+                            isFillViewport = true
+                            isHorizontalScrollBarEnabled = true
+                            layoutParams = LinearLayout.LayoutParams(
+                                0,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                1f,
+                            )
+                        }
+
+                        val editText = EditText(ctx).apply {
+                            background = null
+                            setTextColor(textArgb)
+                            setHintTextColor(commentArgb)
+                            hint = "<!-- Paste or write HTML / CSS / JS here -->"
+                            typeface = Typeface.MONOSPACE
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
+                            setLineSpacing(dp(4).toFloat(), 1f)
+                            gravity = Gravity.TOP or Gravity.START
+                            textDirection = View.TEXT_DIRECTION_LTR
+                            layoutDirection = View.LAYOUT_DIRECTION_LTR
+                            setPadding(dp(12), dp(12), dp(16), dp(24))
+                            minHeight = dp(265)
+                            inputType = InputType.TYPE_CLASS_TEXT or
+                                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                            isFocusable = true
+                            isFocusableInTouchMode = true
+                            setHorizontallyScrolling(true)
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                            )
+                            setOnClickListener {
+                                requestFocus()
+                                val imm = ctx.getSystemService(InputMethodManager::class.java)
+                                imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
                             }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .defaultMinSize(minHeight = 230.dp)
-                                .horizontalScroll(horizontalScroll)
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
-                        ) {
-                            BasicTextField(
-                                value = code,
-                                onValueChange = onCodeChange,
-                                textStyle = codeTextStyle,
-                                cursorBrush = SolidColor(ext.accent),
-                                visualTransformation = syntaxTransformation,
-                                keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Text,
-                                    autoCorrectEnabled = false,
-                                    imeAction = ImeAction.Default,
-                                ),
-                                decorationBox = { innerTextField ->
-                                    Box(
-                                        modifier = Modifier
-                                            .widthIn(min = minEditableWidth)
-                                            .defaultMinSize(minHeight = 206.dp),
-                                    ) {
-                                        if (code.isEmpty()) {
-                                            Text(
-                                                text = "<!-- Paste or write HTML / CSS / JS here -->",
-                                                style = codeTextStyle.copy(color = palette.comment),
-                                            )
-                                        }
-                                        innerTextField()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .widthIn(min = minEditableWidth)
-                                    .defaultMinSize(minHeight = 206.dp)
-                                    .focusRequester(focusRequester)
-                                    .testTag("html_code_editor"),
-                            )
+                        val holder = NativeCodeHolder(editText = editText, gutterView = gutterView)
+                        holderRef = holder
+
+                        editText.addTextChangedListener(object : TextWatcher {
+                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                            override fun afterTextChanged(s: Editable?) {
+                                if (holder.suppressWatcher) return
+                                val newStr = s?.toString().orEmpty()
+                                if (newStr != holder.lastKnownText) {
+                                    holder.lastKnownText = newStr
+                                    latestOnCodeChange(newStr)
+                                }
+                            }
+                        })
+
+                        holder.suppressWatcher = true
+                        holder.lastKnownText = code
+                        editText.setText(code)
+                        holder.suppressWatcher = false
+
+                        hScroll.addView(editText)
+                        row.addView(gutterView)
+                        row.addView(hScroll)
+                        vScroll.addView(row)
+                        vScroll.tag = holder
+                        vScroll
+                    },
+                    update = { vScroll ->
+                        val holder = vScroll.tag as? NativeCodeHolder ?: return@AndroidView
+                        vScroll.setBackgroundColor(bgArgb)
+                        holder.gutterView.setBackgroundColor(gutterArgb)
+                        holder.gutterView.setTextColor(commentArgb)
+                        holder.gutterView.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp - 1).coerceAtLeast(9).toFloat())
+                        holder.editText.setTextColor(textArgb)
+                        holder.editText.setHintTextColor(commentArgb)
+                        holder.editText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
+
+                        if (holder.lastKnownText != code && holder.editText.text?.toString() != code) {
+                            holder.suppressWatcher = true
+                            holder.lastKnownText = code
+                            holder.editText.setText(code)
+                            holder.editText.setSelection(code.length.coerceAtMost(holder.editText.text?.length ?: 0))
+                            holder.suppressWatcher = false
                         }
-                    }
-                }
+                    },
+                )
             }
         }
 
@@ -585,4 +661,33 @@ fun CodeEditorCard(
             }
         }
     }
+}
+
+private fun computeSyntaxSpans(raw: String, palette: EditorPalette): List<SyntaxSpanRange> {
+    val spans = ArrayList<SyntaxSpanRange>(256)
+    val valueColor = palette.value.toArgb()
+    val tagColor = palette.tag.toArgb()
+    val attrColor = palette.attr.toArgb()
+    val kwColor = palette.keyword.toArgb()
+    val commentColor = palette.comment.toArgb()
+
+    Regex(""""[^"\n]*"|'[^'\n]*'""").findAll(raw).forEach { m ->
+        spans.add(SyntaxSpanRange(m.range.first, m.range.last + 1, valueColor))
+    }
+    Regex("""</?[a-zA-Z0-9:-]+|/?>""").findAll(raw).forEach { m ->
+        spans.add(SyntaxSpanRange(m.range.first, m.range.last + 1, tagColor))
+    }
+    Regex("""\s([a-zA-Z0-9:-]+)(?==)""").findAll(raw).forEach { m ->
+        val g = m.groups[1] ?: return@forEach
+        spans.add(SyntaxSpanRange(g.range.first, g.range.last + 1, attrColor))
+    }
+    Regex("""\b(function|const|let|var|return|if|else|document|window|console|flex|grid|linear-gradient|important)\b""")
+        .findAll(raw)
+        .forEach { m ->
+            spans.add(SyntaxSpanRange(m.range.first, m.range.last + 1, kwColor))
+        }
+    Regex("""<!--[\s\S]*?-->|/\*[\s\S]*?\*/""").findAll(raw).forEach { m ->
+        spans.add(SyntaxSpanRange(m.range.first, m.range.last + 1, commentColor))
+    }
+    return spans
 }

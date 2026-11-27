@@ -67,8 +67,9 @@ object CodeLinterAndAudit {
     }
 
     fun detectCodeIssues(html: String): List<CodeIssue> {
+        val sample = if (html.length > 120_000) html.substring(0, 120_000) else html
         val issues = mutableListOf<CodeIssue>()
-        if (!html.contains("<!doctype", ignoreCase = true)) {
+        if (!sample.contains("<!doctype", ignoreCase = true)) {
             issues.add(
                 CodeIssue(
                     line = 1,
@@ -79,8 +80,8 @@ object CodeLinterAndAudit {
                 ),
             )
         }
-        if (!html.contains("name=\"viewport\"", ignoreCase = true) &&
-            !html.contains("name='viewport'", ignoreCase = true)
+        if (!sample.contains("name=\"viewport\"", ignoreCase = true) &&
+            !sample.contains("name='viewport'", ignoreCase = true)
         ) {
             issues.add(
                 CodeIssue(
@@ -92,7 +93,7 @@ object CodeLinterAndAudit {
                 ),
             )
         }
-        if (!html.contains("<title", ignoreCase = true)) {
+        if (!sample.contains("<title", ignoreCase = true)) {
             issues.add(
                 CodeIssue(
                     line = 1,
@@ -103,9 +104,11 @@ object CodeLinterAndAudit {
                 ),
             )
         }
-        val imgMissingAlt = Regex("""<img\b(?![^>]*\balt=)[^>]*>""", RegexOption.IGNORE_CASE).find(html)
+        val imgMissingAlt = Regex("""<img\b([^>]*)>""", RegexOption.IGNORE_CASE)
+            .findAll(sample)
+            .firstOrNull { !it.groupValues[1].contains("alt=", ignoreCase = true) }
         if (imgMissingAlt != null) {
-            val line = html.substring(0, imgMissingAlt.range.first).count { it == '\n' } + 1
+            val line = sample.substring(0, imgMissingAlt.range.first).count { it == '\n' } + 1
             issues.add(
                 CodeIssue(
                     line = line,
@@ -116,9 +119,9 @@ object CodeLinterAndAudit {
                 ),
             )
         }
-        val httpResource = Regex("""(?:src|href)\s*=\s*["']http://[^"']+["']""", RegexOption.IGNORE_CASE).find(html)
+        val httpResource = Regex("""(?:src|href)\s*=\s*["']http://[^"']+["']""", RegexOption.IGNORE_CASE).find(sample)
         if (httpResource != null) {
-            val line = html.substring(0, httpResource.range.first).count { it == '\n' } + 1
+            val line = sample.substring(0, httpResource.range.first).count { it == '\n' } + 1
             issues.add(
                 CodeIssue(
                     line = line,
@@ -132,7 +135,7 @@ object CodeLinterAndAudit {
         if (html.contains("<script", ignoreCase = true) && !html.contains("</script>", ignoreCase = true)) {
             issues.add(
                 CodeIssue(
-                    line = html.lines().size,
+                    line = html.count { it == '\n' } + 1,
                     severity = "ERROR",
                     messageAr = "وسم <script> مفتوح بدون إغلاق </script>",
                     messageEn = "Unclosed <script> tag detected",
@@ -146,8 +149,11 @@ object CodeLinterAndAudit {
     fun applyCodeFix(html: String, fixType: String, appName: String): String = when (fixType) {
         "ADD_DOCTYPE" -> if (html.contains("<!doctype", ignoreCase = true)) html else "<!DOCTYPE html>\n$html"
         "ADD_SEO" -> HtmlToolkit.injectViewportSeoAndIcon(html, appName, "Built with WebForge", "#5B3DF5", true)
-        "ADD_ALT" -> Regex("""<img\b(?![^>]*\balt=)([^>]*)>""", RegexOption.IGNORE_CASE)
-            .replace(html) { "<img alt=\"image\"${it.groupValues[1]}>" }
+        "ADD_ALT" -> Regex("""<img\b([^>]*)>""", RegexOption.IGNORE_CASE)
+            .replace(html) { m ->
+                if (m.groupValues[1].contains("alt=", ignoreCase = true)) m.value
+                else "<img alt=\"image\"${m.groupValues[1]}>"
+            }
         "UPGRADE_HTTPS" -> html.replace("http://", "https://", ignoreCase = true)
         "CLOSE_SCRIPT" -> if (html.contains("</script>", ignoreCase = true)) html else "$html\n</script>"
         else -> html

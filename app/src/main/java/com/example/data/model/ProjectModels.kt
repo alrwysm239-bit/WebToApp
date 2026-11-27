@@ -93,17 +93,41 @@ data class ProjectAsset(
         get() = textContent != null
 }
 
+enum class AppSourceMode(val key: String) {
+    HTML("html"),
+    URL("url");
+
+    companion object {
+        fun fromKey(key: String?): AppSourceMode =
+            entries.firstOrNull { it.key == key } ?: HTML
+    }
+}
+
 data class AppExportConfig(
     val appName: String = "My Web App",
     val packageName: String = "com.webforge.mywebapp",
     val versionName: String = "1.0.0",
     val versionCode: Int = 1,
+    val sourceMode: AppSourceMode = AppSourceMode.HTML,
+    val sourceUrl: String = "",
     val themeColorHex: String = "#5B3DF5",
     val statusBarColorHex: String = "#0C0A20",
+    val navBarColorHex: String = "#0C0A20",
     val orientation: AppOrientation = AppOrientation.AUTO,
     val fullscreen: Boolean = false,
     val pullToRefresh: Boolean = true,
     val keepScreenOn: Boolean = false,
+    val enableZoom: Boolean = false,
+    val desktopMode: Boolean = false,
+    val showProgressBar: Boolean = true,
+    val showFloatingBar: Boolean = false,
+    val openExternalLinksInBrowser: Boolean = false,
+    val customUserAgent: String = "",
+    val splashEnabled: Boolean = true,
+    val splashDurationMs: Int = 1600,
+    val splashTitle: String = "",
+    val splashSubtitle: String = "",
+    val splashBgColorHex: String = "#0C0A20",
     val backButtonBehavior: BackButtonBehavior = BackButtonBehavior.WEB_HISTORY,
     val permissions: Set<String> = setOf("INTERNET", "ACCESS_NETWORK_STATE"),
     val customIconBase64: String? = null,

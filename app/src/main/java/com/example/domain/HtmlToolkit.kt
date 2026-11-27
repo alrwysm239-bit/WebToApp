@@ -20,9 +20,33 @@ object HtmlToolkit {
     )
 
     fun extractTitle(html: String): String? {
+        val sample = if (html.length > 24_000) html.substring(0, 24_000) else html
         val match = Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .find(html)
-        return match?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+            .find(sample)
+        val raw = match?.groupValues?.getOrNull(1)?.trim() ?: return null
+        return decodeHtmlEntities(raw).replace(Regex("""\s+"""), " ").trim().take(60).takeIf { it.isNotEmpty() }
+    }
+
+    fun decodeHtmlEntities(input: String): String {
+        if (!input.contains('&')) return input
+        var out = Regex("""&#x([0-9a-fA-F]+);""").replace(input) { m ->
+            val cp = m.groupValues[1].toIntOrNull(16) ?: return@replace m.value
+            runCatching { String(Character.toChars(cp)) }.getOrDefault(m.value)
+        }
+        out = Regex("""&#(\d+);""").replace(out) { m ->
+            val cp = m.groupValues[1].toIntOrNull() ?: return@replace m.value
+            runCatching { String(Character.toChars(cp)) }.getOrDefault(m.value)
+        }
+        return out
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("&nbsp;", " ")
+            .replace("&ndash;", "–")
+            .replace("&mdash;", "—")
     }
 
     fun slugify(input: String): String {

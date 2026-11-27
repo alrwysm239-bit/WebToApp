@@ -22,12 +22,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Android
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PhotoLibrary
@@ -38,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -65,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.SavedTokens
 import com.example.data.model.AppExportConfig
 import com.example.data.model.AppOrientation
+import com.example.data.model.AppSourceMode
 import com.example.data.model.BackButtonBehavior
 import com.example.data.model.DeployState
 import com.example.data.model.HostingProvider
@@ -393,10 +399,13 @@ fun HostingDeploySheet(
 @Composable
 fun AndroidConfigSheet(
     config: AppExportConfig,
+    publishedUrl: String?,
+    isBuildingApk: Boolean,
     isRtl: Boolean,
     onConfigChange: ((AppExportConfig) -> AppExportConfig) -> Unit,
     onPickCustomIcon: () -> Unit,
     onResetDefaultIcon: () -> Unit,
+    onBuildDirectApk: (saveToDevice: Boolean) -> Unit,
     onExportAndroidProject: (saveToDevice: Boolean) -> Unit,
     onExportKeystoreGuide: (saveToDevice: Boolean) -> Unit,
     onPreviewAppShell: () -> Unit,
@@ -406,6 +415,7 @@ fun AndroidConfigSheet(
     val ext = LocalWebForgeColors.current
     val colorPresets = listOf("#5B3DF5", "#00C6FF", "#0C0A20", "#34E0A1", "#FF5C7C", "#FFFFFF")
     val availablePermissions = listOf("INTERNET", "ACCESS_NETWORK_STATE", "CAMERA", "ACCESS_FINE_LOCATION", "RECORD_AUDIO", "POST_NOTIFICATIONS", "VIBRATE")
+    var showAdvancedDeveloper by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -419,7 +429,72 @@ fun AndroidConfigSheet(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
         ) {
             Text(strings.androidConfigTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Surface(
+                color = ext.success.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, ext.success.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = if (isRtl) {
+                        "بناء وتوقيع ملف APK مباشرة من داخل التطبيق مجاناً 100% — بدون GitHub، بدون مفاتيح، وبدون أي توكن!"
+                    } else {
+                        "Builds and signs a real installable APK directly on-device — 100% free, no GitHub, no keys, no token!"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ext.success,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // App Source Mode: HTML vs Website URL
+            Text(strings.sourceModeLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = config.sourceMode == AppSourceMode.HTML,
+                    onClick = { onConfigChange { it.copy(sourceMode = AppSourceMode.HTML) } },
+                    label = { Text(strings.sourceHtmlMode) },
+                    modifier = Modifier.testTag("android_source_html_chip"),
+                )
+                FilterChip(
+                    selected = config.sourceMode == AppSourceMode.URL,
+                    onClick = {
+                        onConfigChange {
+                            val defaultUrl = it.sourceUrl.ifBlank { publishedUrl.orEmpty() }
+                            it.copy(sourceMode = AppSourceMode.URL, sourceUrl = defaultUrl)
+                        }
+                    },
+                    label = { Text(strings.sourceUrlMode) },
+                    modifier = Modifier.testTag("android_source_url_chip"),
+                )
+            }
+
+            AnimatedVisibility(visible = config.sourceMode == AppSourceMode.URL) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = config.sourceUrl,
+                        onValueChange = { v -> onConfigChange { it.copy(sourceUrl = v) } },
+                        label = { Text(strings.sourceUrlInputLabel) },
+                        leadingIcon = { Icon(Icons.Rounded.Link, null, tint = ext.accent) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("android_source_url_input"),
+                    )
+                    if (!publishedUrl.isNullOrBlank() && config.sourceUrl != publishedUrl) {
+                        TextButton(onClick = { onConfigChange { it.copy(sourceUrl = publishedUrl) } }) {
+                            Text(if (isRtl) "استخدام رابط الموقع المنشور ($publishedUrl)" else "Use published URL", color = ext.accent)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // App Icon Picker Row
             Text(strings.appIconLabel, style = MaterialTheme.typography.labelMedium)
@@ -469,7 +544,7 @@ fun AndroidConfigSheet(
                 label = { Text(strings.packageNameLabel) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("android_package_input"),
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -491,6 +566,68 @@ fun AndroidConfigSheet(
                 )
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Splash Screen Studio Card
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(1.dp, ext.cardBorder),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(strings.splashSectionTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ext.accent)
+                    ToggleLine(strings.splashEnabledLabel, config.splashEnabled) {
+                        onConfigChange { c -> c.copy(splashEnabled = it) }
+                    }
+                    AnimatedVisibility(visible = config.splashEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = config.splashTitle.ifEmpty { config.appName },
+                                onValueChange = { v -> onConfigChange { it.copy(splashTitle = v) } },
+                                label = { Text(strings.splashTitleLabel) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = config.splashSubtitle,
+                                onValueChange = { v -> onConfigChange { it.copy(splashSubtitle = v) } },
+                                label = { Text(strings.splashSubtitleLabel) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(strings.splashDurationLabel, style = MaterialTheme.typography.labelSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(1000 to "1.0s", 1600 to "1.6s", 2500 to "2.5s").forEach { (ms, label) ->
+                                    FilterChip(
+                                        selected = config.splashDurationMs == ms,
+                                        onClick = { onConfigChange { it.copy(splashDurationMs = ms) } },
+                                        label = { Text(label) },
+                                    )
+                                }
+                            }
+                            Text(strings.splashBgColorLabel, style = MaterialTheme.typography.labelSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                colorPresets.forEach { hex ->
+                                    val parsed = runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(ext.glowBorder)
+                                    val selected = config.splashBgColorHex.equals(hex, ignoreCase = true)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(parsed)
+                                            .border(if (selected) 3.dp else 1.dp, if (selected) ext.accent else ext.cardBorder, CircleShape)
+                                            .clickable { onConfigChange { it.copy(splashBgColorHex = hex) } },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
             Text(strings.screenColorLabel, style = MaterialTheme.typography.labelMedium)
             Spacer(modifier = Modifier.height(6.dp))
@@ -504,7 +641,7 @@ fun AndroidConfigSheet(
                             .clip(CircleShape)
                             .background(parsed)
                             .border(if (selected) 3.dp else 1.dp, if (selected) ext.accent else ext.cardBorder, CircleShape)
-                            .clickable { onConfigChange { it.copy(themeColorHex = hex, statusBarColorHex = hex) } },
+                            .clickable { onConfigChange { it.copy(themeColorHex = hex, statusBarColorHex = hex, navBarColorHex = hex) } },
                     )
                 }
             }
@@ -517,15 +654,30 @@ fun AndroidConfigSheet(
                 FilterChip(config.orientation == AppOrientation.LANDSCAPE, { onConfigChange { it.copy(orientation = AppOrientation.LANDSCAPE) } }, { Text(strings.orientationLandscape) })
             }
 
-            // Behavior Toggles
+            // Rich Native Behavior Toggles
             ToggleLine(if (isRtl) "وضع ملء الشاشة (Fullscreen)" else "Fullscreen Immersive Mode", config.fullscreen) {
                 onConfigChange { c -> c.copy(fullscreen = it) }
+            }
+            ToggleLine(strings.showFloatingBarLabel, config.showFloatingBar) {
+                onConfigChange { c -> c.copy(showFloatingBar = it) }
+            }
+            ToggleLine(strings.showProgressBarLabel, config.showProgressBar) {
+                onConfigChange { c -> c.copy(showProgressBar = it) }
             }
             ToggleLine(if (isRtl) "السحب للتحديث (Pull to Refresh)" else "Pull to Refresh", config.pullToRefresh) {
                 onConfigChange { c -> c.copy(pullToRefresh = it) }
             }
+            ToggleLine(strings.enableZoomLabel, config.enableZoom) {
+                onConfigChange { c -> c.copy(enableZoom = it) }
+            }
+            ToggleLine(strings.desktopModeLabel, config.desktopMode) {
+                onConfigChange { c -> c.copy(desktopMode = it) }
+            }
             ToggleLine(if (isRtl) "إبقاء الشاشة مضاءة" else "Keep Screen On", config.keepScreenOn) {
                 onConfigChange { c -> c.copy(keepScreenOn = it) }
+            }
+            ToggleLine(strings.openExternalLinksLabel, config.openExternalLinksInBrowser) {
+                onConfigChange { c -> c.copy(openExternalLinksInBrowser = it) }
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -564,36 +716,35 @@ fun AndroidConfigSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = config.twaHost,
-                onValueChange = { v -> onConfigChange { it.copy(twaHost = v) } },
-                label = { Text("TWA Domain Host (Optional, for assetlinks.json)") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = config.twaSha256,
-                onValueChange = { v -> onConfigChange { it.copy(twaSha256 = v) } },
-                label = { Text("TWA Signing SHA-256 Fingerprint") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = config.admobAppId,
-                onValueChange = { v -> onConfigChange { it.copy(admobAppId = v) } },
-                label = { Text("AdMob App ID (Optional ca-app-pub-...)") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // Primary Direct APK Build Action
+            Spacer(modifier = Modifier.height(14.dp))
+            AnimatedVisibility(visible = isBuildingApk) {
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = ext.success)
+                    Spacer(Modifier.height(4.dp))
+                    Text(strings.buildingApkMsg, style = MaterialTheme.typography.bodySmall, color = ext.success)
+                }
+            }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            GradientButton(
+                text = strings.buildDirectApkBtn,
+                icon = Icons.Rounded.Build,
+                brush = MintCtaBrush,
+                contentColor = Color(0xFF0C0A20),
+                enabled = !isBuildingApk,
+                onClick = { onBuildDirectApk(true) },
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "build_direct_apk_button",
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedGlowButton(
+                    text = strings.shareApkBtn,
+                    icon = Icons.Rounded.Share,
+                    onClick = { if (!isBuildingApk) onBuildDirectApk(false) },
+                    modifier = Modifier.weight(1f),
+                    testTag = "share_direct_apk_button",
+                )
                 OutlinedGlowButton(
                     text = strings.previewAppShell,
                     icon = Icons.Rounded.PhoneAndroid,
@@ -601,31 +752,73 @@ fun AndroidConfigSheet(
                     modifier = Modifier.weight(1f),
                     testTag = "preview_app_shell_button",
                 )
-                OutlinedGlowButton(
-                    text = "Keystore Guide",
-                    icon = Icons.Rounded.Key,
-                    onClick = { onExportKeystoreGuide(true) },
-                    modifier = Modifier.weight(1f),
-                )
             }
 
+            // Collapsible Advanced / Source Export Options
             Spacer(modifier = Modifier.height(10.dp))
-            GradientButton(
-                text = strings.exportAndroidProjectZip,
-                icon = Icons.Rounded.Android,
-                brush = MintCtaBrush,
-                contentColor = Color(0xFF0C0A20),
-                onClick = { onExportAndroidProject(true) },
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "export_android_zip_button",
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedGlowButton(
-                text = strings.shareZip,
-                icon = Icons.Rounded.Share,
-                onClick = { onExportAndroidProject(false) },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            TextButton(onClick = { showAdvancedDeveloper = !showAdvancedDeveloper }) {
+                Icon(if (showAdvancedDeveloper) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, Modifier.size(18.dp), tint = ext.accent)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isRtl) "خيارات متقدمة ومشروع المطورين (Source ZIP / TWA)" else "Advanced Options & Source ZIP", color = ext.accent)
+            }
+
+            AnimatedVisibility(visible = showAdvancedDeveloper) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = config.customUserAgent,
+                        onValueChange = { v -> onConfigChange { it.copy(customUserAgent = v) } },
+                        label = { Text("Custom User-Agent (Optional)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = config.twaHost,
+                        onValueChange = { v -> onConfigChange { it.copy(twaHost = v) } },
+                        label = { Text("TWA Domain Host (Optional, for assetlinks.json)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = config.twaSha256,
+                        onValueChange = { v -> onConfigChange { it.copy(twaSha256 = v) } },
+                        label = { Text("TWA Signing SHA-256 Fingerprint") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = config.admobAppId,
+                        onValueChange = { v -> onConfigChange { it.copy(admobAppId = v) } },
+                        label = { Text("AdMob App ID (Optional ca-app-pub-...)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedGlowButton(
+                        text = strings.exportAndroidProjectZip,
+                        icon = Icons.Rounded.Android,
+                        onClick = { onExportAndroidProject(true) },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "export_android_zip_button",
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedGlowButton(
+                            text = strings.shareZip,
+                            icon = Icons.Rounded.Share,
+                            onClick = { onExportAndroidProject(false) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedGlowButton(
+                            text = "Keystore Guide",
+                            icon = Icons.Rounded.Key,
+                            onClick = { onExportKeystoreGuide(true) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

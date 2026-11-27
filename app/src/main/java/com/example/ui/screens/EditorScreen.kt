@@ -59,7 +59,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -125,17 +129,22 @@ fun EditorScreen(
     val ext = LocalWebForgeColors.current
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
     var splitViewEnabled by remember { mutableStateOf(false) }
     var showPasteModal by remember { mutableStateOf(false) }
     var pasteModalText by remember { mutableStateOf("") }
 
     fun handleSmartPaste() {
-        val sysText = readSystemClipboardText(context).ifBlank { clipboard.getText()?.text.orEmpty() }
-        if (sysText.isNotBlank()) {
-            onPasteHtml(sysText)
-        } else {
-            pasteModalText = state.currentEditorCode
-            showPasteModal = true
+        coroutineScope.launch {
+            val sysText = withContext(Dispatchers.IO) {
+                readSystemClipboardText(context)
+            }.ifBlank { clipboard.getText()?.text.orEmpty() }
+            if (sysText.isNotBlank()) {
+                onPasteHtml(sysText)
+            } else {
+                pasteModalText = ""
+                showPasteModal = true
+            }
         }
     }
 
@@ -161,7 +170,14 @@ fun EditorScreen(
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                     )
-                    val lineCount = state.currentEditorCode.count { it == '\n' } + 1
+                    val lineCount = remember(state.currentEditorCode) {
+                        var lines = 1
+                        val s = state.currentEditorCode
+                        for (i in 0 until s.length) {
+                            if (s[i] == '\n') lines++
+                        }
+                        lines
+                    }
                     Text(
                         text = "$lineCount ${strings.linesCount} • ${state.assets.size + 1} ${strings.assetsCountLabel}",
                         style = MaterialTheme.typography.bodySmall,
@@ -295,10 +311,7 @@ fun EditorScreen(
                 codeIssues = state.codeIssues,
                 onApplyFix = onApplyLintFix,
                 onExpandEmmet = onExpandEmmet,
-                onPasteFromToolbar = {
-                    pasteModalText = readSystemClipboardText(context).ifBlank { clipboard.getText()?.text.orEmpty() }
-                    showPasteModal = true
-                },
+                onPasteFromToolbar = ::handleSmartPaste,
                 isRtlUi = state.settings.language.isRtl,
             )
 
@@ -403,12 +416,36 @@ fun EditorScreen(
             title = { Text(strings.pasteInBoxTitle, fontWeight = FontWeight.Bold) },
             text = {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    OutlinedTextField(
-                        value = pasteModalText,
-                        onValueChange = { pasteModalText = it },
-                        label = { Text("HTML / CSS / JS") },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 260.dp),
-                        shape = RoundedCornerShape(14.dp),
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 260.dp),
+                        factory = { ctx ->
+                            android.widget.EditText(ctx).apply {
+                                hint = "<html>...</html>"
+                                textSize = 12f
+                                setTextColor(android.graphics.Color.WHITE)
+                                setHintTextColor(android.graphics.Color.GRAY)
+                                setBackgroundColor(android.graphics.Color.parseColor("#0C0A20"))
+                                setPadding(24, 24, 24, 24)
+                                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                                addTextChangedListener(object : android.text.TextWatcher {
+                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                                        pasteModalText = s?.toString().orEmpty()
+                                    }
+                                    override fun afterTextChanged(s: android.text.Editable?) = Unit
+                                })
+                                post {
+                                    requestFocus()
+                                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                                    imm?.showSoftInput(this, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                                }
+                            }
+                        },
                     )
                 }
             },

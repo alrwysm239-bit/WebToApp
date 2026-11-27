@@ -39,6 +39,7 @@ import com.example.domain.QrCodeGenerator
 import com.example.domain.WebImporter
 import com.example.domain.WebPConversionResult
 import com.example.domain.ZipArchiveManager
+import com.example.domain.apk.OnDeviceApkBuilder
 import com.example.ui.i18n.stringsFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,6 +87,7 @@ data class WebForgeUiState(
     val canRedo: Boolean = false,
     val lastWebPResult: WebPConversionResult? = null,
     val isGeneratingStorePack: Boolean = false,
+    val isBuildingApk: Boolean = false,
 ) {
     val isEffectiveOffline: Boolean
         get() = settings.offlineMode || !isDeviceOnline
@@ -140,6 +142,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     private val undoStack = ArrayDeque<String>()
     private val redoStack = ArrayDeque<String>()
     private var autoSaveJob: Job? = null
+    private var lintJob: Job? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     init {
@@ -221,11 +224,23 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { settingsRepo.setOnboardingDone(false) }
     }
 
+    private fun scheduleLintDetection(code: String) {
+        lintJob?.cancel()
+        lintJob = viewModelScope.launch {
+            delay(380)
+            val issues = withContext(Dispatchers.Default) {
+                CodeLinterAndAudit.detectCodeIssues(code)
+            }
+            _uiState.update { it.copy(codeIssues = issues) }
+        }
+    }
+
     fun updateCode(newCode: String, recordUndo: Boolean = true) {
         val state = _uiState.value
         val previous = state.currentEditorCode
         if (recordUndo && previous != newCode) {
-            if (undoStack.size >= 30) undoStack.removeFirst()
+            val maxUndo = if (newCode.length > 80_000) 5 else 25
+            while (undoStack.size >= maxUndo) undoStack.removeFirst()
             undoStack.addLast(previous)
             redoStack.clear()
         }
@@ -235,17 +250,17 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             _uiState.update {
                 it.copy(
                     htmlContent = newCode,
-                    codeIssues = CodeLinterAndAudit.detectCodeIssues(newCode),
                     previewRevision = it.previewRevision + 1,
                     canUndo = undoStack.isNotEmpty(),
                     canRedo = redoStack.isNotEmpty(),
                 )
             }
+            scheduleLintDetection(newCode)
         } else {
             _uiState.update { st ->
                 val updatedAssets = st.assets.map { asset ->
                     if (asset.path == selected) {
-                        asset.copy(textContent = newCode, sizeBytes = newCode.toByteArray().size)
+                        asset.copy(textContent = newCode, sizeBytes = newCode.length)
                     } else asset
                 }
                 st.copy(
@@ -375,15 +390,21 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         }
         val title = HtmlToolkit.extractTitle(text)
         _uiState.update { state ->
+            val updatedConfig = if (title != null) {
+                state.appConfig.copy(
+                    appName = title,
+                    splashTitle = state.appConfig.splashTitle.ifBlank { title },
+                )
+            } else state.appConfig
             state.copy(
                 selectedAssetPath = null,
                 htmlContent = text,
                 projectName = title ?: state.projectName,
-                appConfig = if (title != null) state.appConfig.copy(appName = title) else state.appConfig,
-                codeIssues = CodeLinterAndAudit.detectCodeIssues(text),
+                appConfig = updatedConfig,
                 previewRevision = state.previewRevision + 1,
             )
         }
+        scheduleLintDetection(text)
         emitMessage(strings().pastedMsg)
         scheduleAutoSave()
     }
@@ -667,6 +688,56 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
             }
             val fileName = "${HtmlToolkit.slugify(st.projectName)}-standalone.html"
             dispatchExport(fileName, "text/html", bundled.toByteArray(Charsets.UTF_8), saveViaSaf)
+        }
+    }
+
+    fun buildDirectApk(saveViaSaf: Boolean) {
+        if (_uiState.value.isBuildingApk) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isBuildingApk = true) }
+            val st = _uiState.value
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    OnDeviceApkBuilder.buildSignedApk(
+                        context = context,
+                        projectName = st.projectName,
+                        html = st.htmlContent,
+                        assets = st.assets,
+                        config = st.appConfig,
+                    )
+                }
+            }.onSuccess { apkBytes ->
+                _uiState.update { it.copy(isBuildingApk = false) }
+                val slug = HtmlToolkit.slugify(st.appConfig.appName.ifBlank { st.projectName })
+                dispatchExport("$slug.apk", "application/vnd.android.package-archive", apkBytes, saveViaSaf)
+                emitMessage(strings().apkBuiltSuccessMsg)
+            }.onFailure { err ->
+                _uiState.update { it.copy(isBuildingApk = false) }
+                emitMessage(err.localizedMessage ?: "APK build failed")
+            }
+        }
+    }
+
+    fun exportIosWebClip(saveViaSaf: Boolean) {
+        viewModelScope.launch {
+            val st = _uiState.value
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    OnDeviceApkBuilder.buildIosWebClipMobileConfig(
+                        context = context,
+                        projectName = st.projectName,
+                        html = st.htmlContent,
+                        assets = st.assets,
+                        config = st.appConfig,
+                        publishedUrl = st.publishedUrl,
+                    )
+                }
+            }.onSuccess { bytes ->
+                val slug = HtmlToolkit.slugify(st.appConfig.appName.ifBlank { st.projectName })
+                dispatchExport("$slug-ios-app.mobileconfig", "application/x-apple-aspen-config", bytes, saveViaSaf)
+            }.onFailure { err ->
+                emitMessage(err.localizedMessage ?: "iOS profile export failed")
+            }
         }
     }
 
