@@ -142,7 +142,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     private val database = WebForgeDatabase.getInstance(context)
     private val projectRepo = ProjectRepository(database.projectDao())
     private val deployer = HostingDeployer()
-    private val geminiAssistant = GeminiStudioAssistant(context)
+    private val geminiAssistant = GeminiStudioAssistant()
 
     private val _uiState = MutableStateFlow(WebForgeUiState())
     val uiState: StateFlow<WebForgeUiState> = _uiState.asStateFlow()

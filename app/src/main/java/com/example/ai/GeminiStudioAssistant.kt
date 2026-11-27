@@ -1,12 +1,6 @@
 package com.example.ai
 
-import android.content.Context
 import android.util.Log
-import com.google.firebase.Firebase
-import com.google.firebase.FirebaseApp
-import com.google.firebase.ai.ai
-import com.google.firebase.ai.type.Schema
-import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
@@ -34,42 +28,7 @@ data class StoreDescriptionsResult(
     val es: String,
 )
 
-class GeminiStudioAssistant(
-    private val appContext: Context? = null,
-) {
-
-    private fun prepareFirebase() {
-        appContext?.let {
-            if (FirebaseApp.getApps(it).isEmpty()) {
-                configureAppCheck(it, null)
-            }
-        }
-    }
-
-    private val generalModel by lazy {
-        prepareFirebase()
-        Firebase.ai.generativeModel("gemini-3.8-flash")
-    }
-
-    private val storeSchema = Schema.obj(
-        properties = mapOf(
-            "ar" to Schema.string(description = "Arabic Play Store short & full description"),
-            "en" to Schema.string(description = "English Play Store short & full description"),
-            "fr" to Schema.string(description = "French Play Store short & full description"),
-            "es" to Schema.string(description = "Spanish Play Store short & full description"),
-        ),
-    )
-
-    private val storeModel by lazy {
-        prepareFirebase()
-        Firebase.ai.generativeModel(
-            modelName = "gemini-3.8-flash",
-            generationConfig = generationConfig {
-                responseMimeType = "application/json"
-                responseSchema = storeSchema
-            },
-        )
-    }
+class GeminiStudioAssistant {
 
     fun streamGenerateWebsite(
         description: String,
@@ -107,9 +66,9 @@ class GeminiStudioAssistant(
 
         val acc = StringBuilder()
         try {
-            withTimeout(60_000L) {
-                generalModel.generateContentStream(prompt).collect { chunk ->
-                    val piece = chunk.text.orEmpty()
+            withTimeout(120_000L) {
+                GeminiRest.stream(prompt).collect { chunk ->
+                    val piece = chunk
                     if (piece.isNotEmpty()) {
                         acc.append(piece)
                         emit(acc.toString())
@@ -118,7 +77,7 @@ class GeminiStudioAssistant(
             }
         } catch (e: TimeoutCancellationException) {
             Log.e(TAG, "Gemini site generation timed out", e)
-            throw IllegalStateException("AI request timed out after 60s. Please retry.", e)
+            throw IllegalStateException("AI request timed out after 120s. Please retry.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -172,8 +131,8 @@ class GeminiStudioAssistant(
         }
 
         return try {
-            val response = withTimeout(60_000L) {
-                generalModel.generateContent(prompt)
+            val response = withTimeout(120_000L) {
+                GeminiRest.generate(prompt)
             }
             val raw = response.text?.trim().orEmpty()
             if (raw.isEmpty()) throw IllegalStateException("Empty response from Gemini.")
@@ -186,7 +145,7 @@ class GeminiStudioAssistant(
             }
         } catch (e: TimeoutCancellationException) {
             Log.e(TAG, "Quick transform timed out", e)
-            throw IllegalStateException("AI request timed out after 60s.", e)
+            throw IllegalStateException("AI request timed out after 120s.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -215,8 +174,8 @@ class GeminiStudioAssistant(
         """.trimIndent()
 
         return try {
-            val response = withTimeout(60_000L) {
-                generalModel.generateContent(prompt)
+            val response = withTimeout(120_000L) {
+                GeminiRest.generate(prompt)
             }
             val raw = response.text?.trim().orEmpty()
             if (raw.isEmpty()) throw IllegalStateException("Empty response from Gemini.")
@@ -232,7 +191,7 @@ class GeminiStudioAssistant(
             }
         } catch (e: TimeoutCancellationException) {
             Log.e(TAG, "AI chat timed out", e)
-            throw IllegalStateException("AI chat timed out after 60s.", e)
+            throw IllegalStateException("AI chat timed out after 120s.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -248,8 +207,8 @@ class GeminiStudioAssistant(
         """.trimIndent()
 
         return try {
-            val response = withTimeout(60_000L) {
-                storeModel.generateContent(prompt)
+            val response = withTimeout(120_000L) {
+                GeminiRest.generate(prompt, jsonMode = true)
             }
             val jsonText = response.text ?: throw IllegalStateException("Empty AI JSON response.")
             val json = JSONObject(jsonText)

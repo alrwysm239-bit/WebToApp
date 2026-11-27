@@ -611,7 +611,7 @@ fun GeminiAiStudioSheet(
                     if (isMobileAppMode) "Build HTML5 App with Gemini ✨" else "Build Website with Gemini ✨"
                 },
                 icon = Icons.Rounded.AutoAwesome,
-                enabled = !isOffline && sitePrompt.isNotBlank() && aiTaskState !is AiTaskState.Loading,
+                enabled = !isOffline && sitePrompt.isNotBlank() && aiTaskState !is AiTaskState.Loading && aiTaskState !is AiTaskState.Streaming,
                 onClick = { onGenerateSite(sitePrompt, isMobileAppMode) },
                 modifier = Modifier.fillMaxWidth(),
                 testTag = "ai_generate_site_button",
