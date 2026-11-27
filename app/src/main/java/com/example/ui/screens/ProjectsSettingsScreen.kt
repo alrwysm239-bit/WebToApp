@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -20,12 +22,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Restore
@@ -34,6 +38,8 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -54,10 +60,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.ai.GeminiConfig
 import com.example.data.model.AppLanguage
 import com.example.data.model.EditorTheme
 import com.example.data.model.ProjectSnapshot
@@ -98,15 +109,21 @@ fun ProjectsSettingsScreen(
     onClearTokens: () -> Unit,
     onClearAllData: () -> Unit,
     onReopenOnboarding: () -> Unit,
+    onNotifyMessage: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val formatter = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()) }
 
     var searchQuery by remember { mutableStateOf("") }
     var sortBy by remember { mutableStateOf(ProjectSort.RECENT) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var savedUserGeminiKey by remember { mutableStateOf(GeminiConfig.getSavedUserKey(context)) }
+    var geminiKeyInput by remember { mutableStateOf(savedUserGeminiKey) }
+    var showGeminiKey by remember { mutableStateOf(false) }
 
     val displayedProjects = remember(savedProjects, searchQuery, sortBy) {
         val filtered = savedProjects.filter {
@@ -312,6 +329,107 @@ fun ProjectsSettingsScreen(
 
             GlowingFrameCard(modifier = Modifier.fillMaxWidth(), glowing = false) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Gemini API Key
+                    val hasAnyGeminiKey = savedUserGeminiKey.isNotBlank() || GeminiConfig.resolveApiKey(context).isNotBlank()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Key, null, tint = ext.accent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("مفتاح Gemini", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (!hasAnyGeminiKey) {
+                        Surface(
+                            color = ext.warning.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_gemini_missing_notice"),
+                        ) {
+                            Text(
+                                text = "مفتاح Gemini غير موجود حالياً. لتشغيل الذكاء الاصطناعي في التطبيق المثبّت، انسخ مفتاحك من aistudio.google.com/apikey والصقه في حقل «مفتاح Gemini» أدناه ثم اضغط «حفظ».",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ext.warning,
+                                modifier = Modifier.padding(10.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    } else {
+                        Text(
+                            text = if (savedUserGeminiKey.isNotBlank()) {
+                                "تم حفظ مفتاح Gemini محلياً في التطبيق ✓"
+                            } else {
+                                "يتم استخدام مفتاح Gemini المضمّن وقت البناء ✓ (يمكنك إدخال مفتاح خاص بك لاستبداله)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ext.success,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    OutlinedTextField(
+                        value = geminiKeyInput,
+                        onValueChange = { geminiKeyInput = it },
+                        label = { Text("مفتاح Gemini") },
+                        placeholder = { Text("AIza...") },
+                        singleLine = true,
+                        visualTransformation = if (showGeminiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showGeminiKey = !showGeminiKey }) {
+                                Icon(
+                                    imageVector = if (showGeminiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    contentDescription = if (showGeminiKey) "إخفاء المفتاح" else "إظهار المفتاح",
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("settings_gemini_key_input"),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        GradientButton(
+                            text = "حفظ",
+                            icon = Icons.Rounded.Save,
+                            onClick = {
+                                val cleaned = geminiKeyInput.trim()
+                                geminiKeyInput = cleaned
+                                GeminiConfig.saveUserKey(cleaned, context)
+                                savedUserGeminiKey = GeminiConfig.getSavedUserKey(context)
+                                onNotifyMessage(
+                                    if (cleaned.isNotEmpty()) "تم حفظ مفتاح Gemini محلياً بنجاح"
+                                    else "تم مسح مفتاح Gemini المحفوظ",
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            testTag = "settings_gemini_key_save_button",
+                        )
+                        OutlinedGlowButton(
+                            text = "لصق من الحافظة",
+                            icon = Icons.Rounded.ContentPaste,
+                            onClick = {
+                                val clipText = runCatching {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    val clip = cm?.primaryClip
+                                    if (clip != null && clip.itemCount > 0) {
+                                        clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
+                                    } else {
+                                        ""
+                                    }
+                                }.getOrDefault("").ifBlank { clipboard.getText()?.text.orEmpty() }.trim()
+                                if (clipText.isNotEmpty()) {
+                                    geminiKeyInput = clipText
+                                    onNotifyMessage("تم لصق المفتاح — اضغط «حفظ»")
+                                } else {
+                                    onNotifyMessage(strings.clipboardEmptyMsg)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            testTag = "settings_gemini_key_paste_button",
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ext.cardBorder)
+
                     // 4 Languages
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Language, null, tint = ext.accent, modifier = Modifier.size(18.dp))

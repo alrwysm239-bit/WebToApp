@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.ai.GeminiConfig
 import com.example.ai.configureAppCheck
 import com.example.ui.WebForgeApp
 import com.example.ui.theme.WebForgeTheme
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Must run before any Firebase / ViewModel initialization or setContent
         configureAppCheck(this, intent)
+        GeminiConfig.init(this)
 
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

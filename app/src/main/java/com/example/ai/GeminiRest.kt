@@ -1,5 +1,6 @@
 package com.example.ai
 
+import android.content.Context
 import com.example.BuildConfig
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -23,9 +24,46 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Reads GEMINI_API_KEY from BuildConfig (via AI Studio Secrets / .env). */
+/** Reads Gemini API key: 1) user key saved locally in SharedPreferences, 2) BuildConfig.GEMINI_API_KEY. */
 object GeminiConfig {
-    val API_KEY: String get() = BuildConfig.GEMINI_API_KEY
+    private const val PREFS_NAME = "webforge_gemini_prefs"
+    private const val KEY_API_KEY = "gemini_api_key"
+
+    @Volatile
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    fun getSavedUserKey(context: Context? = appContext): String {
+        val ctx = context?.applicationContext ?: appContext ?: return ""
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_API_KEY, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    fun saveUserKey(key: String, context: Context? = appContext) {
+        val ctx = context?.applicationContext ?: appContext ?: return
+        val clean = key.trim()
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (clean.isEmpty()) remove(KEY_API_KEY) else putString(KEY_API_KEY, clean)
+            }
+            .commit()
+    }
+
+    fun resolveApiKey(context: Context? = appContext): String {
+        val userKey = getSavedUserKey(context)
+        if (userKey.isNotEmpty()) return userKey
+        val buildKey = BuildConfig.GEMINI_API_KEY.trim()
+        if (buildKey.isNotEmpty() && !buildKey.startsWith("PUT_YOUR")) return buildKey
+        return ""
+    }
+
+    val API_KEY: String get() = resolveApiKey()
     const val MODEL = "gemini-2.5-flash"
     val FALLBACK_MODELS = listOf(
         "gemini-2.5-flash",
@@ -51,9 +89,11 @@ object GeminiRest {
     private class RetryableGeminiException(message: String) : IllegalStateException(message)
 
     private fun requireKey(): String {
-        val k = GeminiConfig.API_KEY.trim()
-        if (k.isEmpty() || k.startsWith("PUT_YOUR")) {
-            throw IllegalStateException("Gemini API key is missing. Set GEMINI_API_KEY in AI Studio Secrets.")
+        val k = GeminiConfig.resolveApiKey().trim()
+        if (k.isEmpty()) {
+            throw IllegalStateException(
+                "مفتاح Gemini غير موجود. انتقل إلى تبويب «المشاريع» ← «الإعدادات» وأدخل مفتاحك في حقل «مفتاح Gemini» ثم اضغط «حفظ»."
+            )
         }
         return k
     }
@@ -93,6 +133,11 @@ object GeminiRest {
             JSONObject(raw).optJSONObject("error")?.optString("message")
         } catch (e: Exception) {
             null
+        }
+        if (code in setOf(400, 401, 403) &&
+            (msg?.contains("API key", ignoreCase = true) == true || raw.contains("API_KEY_INVALID", ignoreCase = true))
+        ) {
+            return "مفتاح Gemini غير صالح ($code). تأكد من نسخ المفتاح الصحيح ولصقه في «المشاريع» ← «الإعدادات» ← «مفتاح Gemini» ثم اضغط «حفظ»."
         }
         return "Gemini error $code: ${if (msg.isNullOrBlank()) raw.take(300) else msg}"
     }

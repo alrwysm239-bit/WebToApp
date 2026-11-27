@@ -501,6 +501,7 @@ fun WebForgeApp(viewModel: WebForgeViewModel = viewModel()) {
                                         onClearTokens = viewModel::clearSavedTokens,
                                         onClearAllData = viewModel::clearAllData,
                                         onReopenOnboarding = viewModel::reopenOnboarding,
+                                        onNotifyMessage = viewModel::emitMessage,
                                     )
                                 }
                             }

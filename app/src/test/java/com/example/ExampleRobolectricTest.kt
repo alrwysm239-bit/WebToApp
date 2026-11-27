@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.ai.GeminiConfig
 import com.example.ai.configureAppCheck
 import com.example.data.model.AppExportConfig
 import com.example.data.model.AppOrientation
@@ -36,6 +37,24 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         configureAppCheck(context, null)
         assertTrue("FirebaseApp should initialize cleanly with Context", FirebaseApp.getApps(context).isNotEmpty())
+    }
+
+    @Test
+    fun `geminiConfig prioritizes user SharedPreferences key over buildConfig fallback`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        GeminiConfig.init(context)
+        GeminiConfig.saveUserKey("", context)
+        assertEquals("", GeminiConfig.getSavedUserKey(context))
+
+        GeminiConfig.saveUserKey("  AIzaTestUserKey123  ", context)
+        assertEquals("AIzaTestUserKey123", GeminiConfig.getSavedUserKey(context))
+        assertEquals("AIzaTestUserKey123", GeminiConfig.resolveApiKey(context))
+
+        GeminiConfig.saveUserKey("", context)
+        val expectedFallback = BuildConfig.GEMINI_API_KEY.trim().let {
+            if (it.isNotEmpty() && !it.startsWith("PUT_YOUR")) it else ""
+        }
+        assertEquals(expectedFallback, GeminiConfig.resolveApiKey(context))
     }
 
     @Test

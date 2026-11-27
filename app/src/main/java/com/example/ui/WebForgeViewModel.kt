@@ -10,6 +10,7 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiQuickAction
+import com.example.ai.GeminiConfig
 import com.example.ai.GeminiStudioAssistant
 import com.example.data.local.SettingsRepository
 import com.example.data.local.UserSettings
@@ -168,6 +169,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     init {
+        GeminiConfig.init(context)
         observeConnectivity()
         viewModelScope.launch {
             settingsRepo.settingsFlow.collect { settings ->
@@ -1262,6 +1264,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             projectRepo.clearAllProjects()
             settingsRepo.clearAll()
+            GeminiConfig.saveUserKey("", context)
             createBlankNewProject()
             emitMessage(strings().savedSuccess)
         }
