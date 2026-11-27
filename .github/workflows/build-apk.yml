@@ -133,8 +133,11 @@ jobs:
               if name and name not in pkgs:
                   pkgs.append(name)
           print("Packages found in google-services.json:", pkgs)
+          print("Number of clients in file:", len(data.get("client", [])))
           if not pkgs:
-              raise SystemExit("google-services.json has no Android client. Register an Android app in Firebase and download the file again.")
+              print("::warning::google-services.json has NO Android app inside it, so it was ignored. The APK will build but Firebase login will not work. In Firebase add an Android app, then download the file again.")
+              gj.unlink()
+              raise SystemExit(0)
 
           gradle = pathlib.Path("app/build.gradle.kts")
           g = gradle.read_text(encoding="utf-8")
