@@ -310,31 +310,24 @@ object HtmlToolkit {
 
     fun injectPwaLinks(rawHtml: String): String {
         var html = rawHtml
+        val headAdditions = StringBuilder()
         if (!html.contains("manifest.webmanifest", ignoreCase = true) &&
             !html.contains("manifest.json", ignoreCase = true)
         ) {
-            val manifestTag = "  <link rel=\"manifest\" href=\"manifest.webmanifest\">\n  <link rel=\"apple-touch-icon\" href=\"icon-192.png\">"
-            val closeHead = Regex("""</head>""", RegexOption.IGNORE_CASE).find(html)
-            html = if (closeHead != null) {
-                html.replaceRange(closeHead.range, "$manifestTag\n${closeHead.value}")
-            } else {
-                "$manifestTag\n$html"
-            }
+            headAdditions.appendLine("""  <link rel="manifest" href="manifest.webmanifest">""")
+            headAdditions.appendLine("""  <link rel="apple-touch-icon" href="icon-192.png">""")
         }
         if (!html.contains("serviceWorker.register", ignoreCase = true)) {
-            val swScript = """
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function() {
-        navigator.serviceWorker.register('./sw.js').catch(function() {});
-      });
-    }
-  </script>""".trimIndent()
-            val closeBody = Regex("""</body>""", RegexOption.IGNORE_CASE).find(html)
-            html = if (closeBody != null) {
-                html.replaceRange(closeBody.range, "$swScript\n${closeBody.value}")
+            headAdditions.appendLine(
+                """  <script>if('serviceWorker'in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('./sw.js').catch(function(){});});}</script>""",
+            )
+        }
+        if (headAdditions.isNotEmpty()) {
+            val closeHead = Regex("""</head>""", RegexOption.IGNORE_CASE).find(html)
+            html = if (closeHead != null) {
+                html.replaceRange(closeHead.range, "${headAdditions.toString().trimEnd()}\n${closeHead.value}")
             } else {
-                "$html\n$swScript"
+                "${headAdditions.toString().trimEnd()}\n$html"
             }
         }
         return html

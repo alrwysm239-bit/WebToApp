@@ -1,5 +1,6 @@
 package com.example.ai
 
+import android.content.Context
 import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
@@ -32,9 +33,16 @@ data class StoreDescriptionsResult(
     val es: String,
 )
 
-class GeminiStudioAssistant {
+class GeminiStudioAssistant(
+    private val appContext: Context? = null,
+) {
+
+    private fun prepareFirebase() {
+        appContext?.let { ensureFirebaseInitialized(it) }
+    }
 
     private val generalModel by lazy {
+        prepareFirebase()
         Firebase.ai.generativeModel("gemini-3.8-flash")
     }
 
@@ -48,6 +56,7 @@ class GeminiStudioAssistant {
     )
 
     private val storeModel by lazy {
+        prepareFirebase()
         Firebase.ai.generativeModel(
             modelName = "gemini-3.8-flash",
             generationConfig = generationConfig {

@@ -120,7 +120,7 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
     private val database = WebForgeDatabase.getInstance(context)
     private val projectRepo = ProjectRepository(database.projectDao())
     private val deployer = HostingDeployer()
-    private val geminiAssistant = GeminiStudioAssistant()
+    private val geminiAssistant = GeminiStudioAssistant(context)
 
     private val _uiState = MutableStateFlow(WebForgeUiState())
     val uiState: StateFlow<WebForgeUiState> = _uiState.asStateFlow()
@@ -903,7 +903,15 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     HostingProvider.FREE_INSTANT -> {
                         val zipBytes = withContext(Dispatchers.IO) { ZipArchiveManager.zipFileMap(fileMap) }
                         val singleHtml = withContext(Dispatchers.Default) {
-                            CodeLinterAndAudit.bundleSingleSelfContainedHtml(state.htmlContent, state.assets)
+                            val bundled = CodeLinterAndAudit.bundleSingleSelfContainedHtml(state.htmlContent, state.assets)
+                            val withSeo = HtmlToolkit.injectViewportSeoAndIcon(
+                                rawHtml = bundled,
+                                title = state.appConfig.appName.ifBlank { state.projectName },
+                                description = state.appConfig.seoDescription,
+                                themeColorHex = state.appConfig.themeColorHex,
+                                hasFavicon = true,
+                            )
+                            HtmlToolkit.injectPwaLinks(withSeo)
                         }
                         deployer.deployFreeInstant(
                             singleHtml = singleHtml,

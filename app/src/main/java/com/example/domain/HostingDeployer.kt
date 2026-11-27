@@ -160,6 +160,25 @@ class HostingDeployer {
         "https://$cleanOwner.github.io/$cleanRepo/"
     }
 
+    suspend fun verifyGitHubToken(token: String): String? = withContext(Dispatchers.IO) {
+        val cleanToken = token.trim()
+        if (cleanToken.isEmpty()) return@withContext null
+        val req = Request.Builder()
+            .url("https://api.github.com/user")
+            .header("Authorization", "Bearer $cleanToken")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "WebForge-Android/2.0")
+            .get()
+            .build()
+        runCatching {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val body = resp.body?.string() ?: return@use null
+                JSONObject(body).optString("login").takeIf { it.isNotBlank() }
+            }
+        }.getOrNull()
+    }
+
     private fun fetchGithubFileSha(token: String, owner: String, repo: String, path: String): String? {
         val req = Request.Builder()
             .url("https://api.github.com/repos/$owner/$repo/contents/$path")

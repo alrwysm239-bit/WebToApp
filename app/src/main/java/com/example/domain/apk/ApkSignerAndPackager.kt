@@ -1,14 +1,18 @@
 package com.example.domain.apk
 
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -39,16 +43,17 @@ object ApkSignerAndPackager {
     fun packageAndSignApk(
         entries: List<ZipInputEntry>,
         appSignerName: String = "WebForge Studio",
+        keyStoreDir: File? = null,
     ): ByteArray {
-        val keyPair = generateRsa2048KeyPair()
-        val certDer = generateSelfSignedX509Cert(keyPair, appSignerName)
+        val uniqueEntries = entries.associateBy { it.name }.values.toList()
+        val (keyPair, certDer) = loadOrCreateSigningIdentity(keyStoreDir, appSignerName)
 
-        val mfText = buildManifestMf(entries)
+        val mfText = buildManifestMf(uniqueEntries)
         val mfBytes = mfText.toByteArray(Charsets.UTF_8)
         val sfBytes = buildCertSf(mfBytes).toByteArray(Charsets.UTF_8)
         val rsaBytes = buildPkcs7Signature(sfBytes, keyPair.private, certDer)
 
-        val allEntries = entries + listOf(
+        val allEntries = uniqueEntries + listOf(
             ZipInputEntry("META-INF/MANIFEST.MF", mfBytes, storeUncompressed = false),
             ZipInputEntry("META-INF/CERT.SF", sfBytes, storeUncompressed = false),
             ZipInputEntry("META-INF/CERT.RSA", rsaBytes, storeUncompressed = false),
@@ -246,7 +251,10 @@ object ApkSignerAndPackager {
         val md = MessageDigest.getInstance("SHA-256")
         entries.forEach { e ->
             val b64 = encodeBase64(md.digest(e.data))
-            append("Name: ${e.name}\r\nSHA-256-Digest: $b64\r\n\r\n")
+            append(wrapManifestAttribute("Name: ${e.name}"))
+            append("\r\n")
+            append(wrapManifestAttribute("SHA-256-Digest: $b64"))
+            append("\r\n\r\n")
         }
     }
 
@@ -262,10 +270,37 @@ object ApkSignerAndPackager {
             sections.forEach { sec ->
                 val rawSec = "$sec\r\n\r\n".toByteArray(Charsets.UTF_8)
                 val secDigest = encodeBase64(md.digest(rawSec))
-                val nameLine = sec.lineSequence().firstOrNull() ?: ""
-                append("$nameLine\r\nSHA-256-Digest: $secDigest\r\n\r\n")
+                val nameHeaderLines = sec.substringBefore("\r\nSHA-256-Digest:")
+                append(nameHeaderLines)
+                append("\r\n")
+                append(wrapManifestAttribute("SHA-256-Digest: $secDigest"))
+                append("\r\n\r\n")
             }
         }
+    }
+
+    private fun wrapManifestAttribute(line: String): String {
+        val bytes = line.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= 70) return line
+        val sb = StringBuilder()
+        var i = 0
+        var first = true
+        while (i < line.length) {
+            val maxBytes = if (first) 70 else 69
+            var end = i
+            var byteCount = 0
+            while (end < line.length) {
+                val chLen = line.substring(end, end + 1).toByteArray(Charsets.UTF_8).size
+                if (byteCount + chLen > maxBytes && end > i) break
+                byteCount += chLen
+                end++
+            }
+            if (!first) sb.append("\r\n ")
+            sb.append(line.substring(i, end))
+            i = end
+            first = false
+        }
+        return sb.toString()
     }
 
     private fun encodeBase64(data: ByteArray): String {
@@ -325,6 +360,36 @@ object ApkSignerAndPackager {
         )
     }
 
+    private fun loadOrCreateSigningIdentity(dir: File?, cn: String): Pair<KeyPair, ByteArray> {
+        if (dir != null) {
+            val privFile = File(dir, "signing_private.pk8")
+            val pubFile = File(dir, "signing_public.x509")
+            val certFile = File(dir, "signing_cert.der")
+            if (privFile.exists() && pubFile.exists() && certFile.exists()) {
+                val loaded = runCatching {
+                    val kf = KeyFactory.getInstance("RSA")
+                    val priv = kf.generatePrivate(PKCS8EncodedKeySpec(privFile.readBytes()))
+                    val pub = kf.generatePublic(X509EncodedKeySpec(pubFile.readBytes()))
+                    val cert = certFile.readBytes()
+                    check(cert.isNotEmpty())
+                    KeyPair(pub, priv) to cert
+                }.getOrNull()
+                if (loaded != null) return loaded
+            }
+        }
+        val keyPair = generateRsa2048KeyPair()
+        val certDer = generateSelfSignedX509Cert(keyPair, cn)
+        if (dir != null) {
+            runCatching {
+                dir.mkdirs()
+                File(dir, "signing_private.pk8").writeBytes(keyPair.private.encoded)
+                File(dir, "signing_public.x509").writeBytes(keyPair.public.encoded)
+                File(dir, "signing_cert.der").writeBytes(certDer)
+            }
+        }
+        return keyPair to certDer
+    }
+
     private fun generateRsa2048KeyPair(): KeyPair {
         val kpg = KeyPairGenerator.getInstance("RSA")
         kpg.initialize(2048)
@@ -333,7 +398,7 @@ object ApkSignerAndPackager {
 
     private fun generateSelfSignedX509Cert(keyPair: KeyPair, cn: String): ByteArray {
         val safeCn = cn.replace(Regex("[^a-zA-Z0-9 _-]"), "").ifBlank { "WebForge" }.take(32)
-        val serial = BigInteger.valueOf(System.currentTimeMillis() and 0x7FFFFFFFL)
+        val serial = BigInteger.valueOf((System.currentTimeMillis() and 0x7FFFFFFFL).coerceAtLeast(1L))
         val sigAlg = derSeq(derOid("1.2.840.113549.1.1.11") + derNull()) // sha256WithRSAEncryption
         val name = derSeq(
             derSet(

@@ -84,11 +84,16 @@ object OnDeviceApkBuilder {
                     storeUncompressed = false,
                 ),
             )
+            val seenPaths = hashSetOf("assets/www/index.html")
             assets.forEach { asset ->
+                val cleanRel = asset.path.trimStart('/')
+                if (cleanRel.isBlank() || cleanRel.contains("..")) return@forEach
+                val entryName = "assets/www/$cleanRel"
+                if (!seenPaths.add(entryName)) return@forEach
                 ZipArchiveManager.assetToBytes(asset)?.let { bytes ->
                     entries.add(
                         ApkSignerAndPackager.ZipInputEntry(
-                            "assets/www/${asset.path.trimStart('/')}",
+                            entryName,
                             bytes,
                             storeUncompressed = !asset.isText,
                             alignBytes = 4,
@@ -98,7 +103,11 @@ object OnDeviceApkBuilder {
             }
         }
 
-        return ApkSignerAndPackager.packageAndSignApk(entries, appSignerName = safeAppName)
+        return ApkSignerAndPackager.packageAndSignApk(
+            entries = entries,
+            appSignerName = safeAppName,
+            keyStoreDir = java.io.File(context.filesDir, "signing"),
+        )
     }
 
     /**

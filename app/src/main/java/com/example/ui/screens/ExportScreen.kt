@@ -155,6 +155,7 @@ fun ExportScreen(
             )
 
             if (!state.publishedUrl.isNullOrBlank()) {
+                val isRtl = state.settings.language.isRtl
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -162,24 +163,38 @@ fun ExportScreen(
                     border = BorderStroke(1.dp, ext.success.copy(alpha = 0.6f)),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(strings.deploySuccessTitle, style = MaterialTheme.typography.labelSmall, color = ext.success, fontWeight = FontWeight.Bold)
-                            Text(
-                                text = state.publishedUrl,
-                                style = TextStyle(fontFamily = MonoFontFamily, fontSize = 12.sp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(strings.deploySuccessTitle, style = MaterialTheme.typography.labelSmall, color = ext.success, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = state.publishedUrl,
+                                    style = TextStyle(fontFamily = MonoFontFamily, fontSize = 12.sp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            IconButton(onClick = {
+                                clipboard.setText(AnnotatedString(state.publishedUrl))
+                                onCopiedFeedback()
+                            }) {
+                                Icon(Icons.Rounded.ContentCopy, strings.copyUrl, tint = ext.success, modifier = Modifier.size(18.dp))
+                            }
                         }
-                        IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(state.publishedUrl))
-                            onCopiedFeedback()
-                        }) {
-                            Icon(Icons.Rounded.ContentCopy, strings.copyUrl, tint = ext.success, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                val encoded = java.net.URLEncoder.encode(state.publishedUrl, "UTF-8")
+                                onOpenUrl("https://www.pwabuilder.com/reportcard?site=$encoded")
+                            },
+                        ) {
+                            Icon(Icons.Rounded.Android, null, tint = ext.accent, modifier = Modifier.size(16.dp))
+                            androidx.compose.foundation.layout.Spacer(Modifier.size(6.dp))
+                            Text(
+                                text = if (isRtl) "بناء APK مجاني عبر PWABuilder" else "Build Free APK via PWABuilder",
+                                color = ext.accent,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }

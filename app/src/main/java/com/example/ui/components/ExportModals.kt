@@ -64,6 +64,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -77,10 +79,13 @@ import com.example.data.model.AppSourceMode
 import com.example.data.model.BackButtonBehavior
 import com.example.data.model.DeployState
 import com.example.data.model.HostingProvider
+import com.example.domain.HostingDeployer
 import com.example.domain.HtmlToolkit
 import com.example.ui.i18n.LocalStrings
 import com.example.ui.theme.LocalWebForgeColors
 import com.example.ui.theme.MonoFontFamily
+import kotlinx.coroutines.delay
+import java.net.URLEncoder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,14 +107,19 @@ fun HostingDeploySheet(
 ) {
     val strings = LocalStrings.current
     val ext = LocalWebForgeColors.current
+    val clipboard = LocalClipboardManager.current
+    val tokenVerifier = remember { HostingDeployer() }
     var selectedProvider by remember(initialProvider) { mutableStateOf(initialProvider) }
     var token by remember { mutableStateOf("") }
     var primaryParam by remember { mutableStateOf("") }
     var secondaryParam by remember { mutableStateOf(HtmlToolkit.slugify(projectName)) }
     var saveTokenLocally by remember { mutableStateOf(true) }
     var showDnsGuide by remember { mutableStateOf(false) }
+    var isVerifyingGithub by remember { mutableStateOf(false) }
+    var githubTokenValid by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(selectedProvider, savedTokens) {
+        githubTokenValid = null
         when (selectedProvider) {
             HostingProvider.FREE_INSTANT -> {
                 token = ""
@@ -136,6 +146,24 @@ fun HostingDeploySheet(
                 token = savedTokens.firebaseToken
                 primaryParam = savedTokens.firebaseSiteId
             }
+        }
+    }
+
+    LaunchedEffect(selectedProvider, token) {
+        if (selectedProvider != HostingProvider.GITHUB_PAGES || token.isBlank()) {
+            isVerifyingGithub = false
+            githubTokenValid = null
+            return@LaunchedEffect
+        }
+        isVerifyingGithub = true
+        delay(450L)
+        val login = tokenVerifier.verifyGitHubToken(token)
+        isVerifyingGithub = false
+        if (login != null) {
+            githubTokenValid = true
+            primaryParam = login
+        } else {
+            githubTokenValid = false
         }
     }
 
@@ -213,7 +241,81 @@ fun HostingDeploySheet(
                     modifier = Modifier.fillMaxWidth().testTag("deploy_token_input"),
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val tokenHelpUrl = when (selectedProvider) {
+                        HostingProvider.GITHUB_PAGES -> "https://github.com/settings/tokens/new?scopes=repo&description=WebForge"
+                        HostingProvider.NETLIFY -> "https://app.netlify.com/user/applications#personal-access-tokens"
+                        HostingProvider.VERCEL -> "https://vercel.com/account/tokens"
+                        HostingProvider.CLOUDFLARE_PAGES -> "https://dash.cloudflare.com/profile/api-tokens"
+                        HostingProvider.FIREBASE_HOSTING -> "https://console.firebase.google.com/"
+                        HostingProvider.FREE_INSTANT -> ""
+                    }
+                    if (tokenHelpUrl.isNotEmpty()) {
+                        TextButton(
+                            onClick = { onOpenUrl(tokenHelpUrl) },
+                            modifier = Modifier.testTag("get_token_browser_button"),
+                        ) {
+                            Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(16.dp), tint = ext.accent)
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (isRtl) "احصل على التوكن" else "Get Token", color = ext.accent)
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            val clipText = clipboard.getText()?.text?.trim().orEmpty()
+                            if (clipText.isNotEmpty()) {
+                                token = clipText
+                            }
+                        },
+                        modifier = Modifier.testTag("paste_token_clipboard_button"),
+                    ) {
+                        Icon(Icons.Rounded.ContentPaste, null, Modifier.size(16.dp), tint = ext.success)
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (isRtl) "لصق من الحافظة" else "Paste from Clipboard", color = ext.success)
+                    }
+                }
+
+                if (selectedProvider == HostingProvider.GITHUB_PAGES && token.isNotBlank()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    ) {
+                        when {
+                            isVerifyingGithub -> {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = ext.accent)
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = if (isRtl) "جاري التحقق من التوكن..." else "Verifying GitHub token...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ext.accent,
+                                )
+                            }
+                            githubTokenValid == true -> {
+                                Text(
+                                    text = if (isRtl) "التوكن صالح ✓ (${primaryParam})" else "Token valid ✓ (${primaryParam})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ext.success,
+                                )
+                            }
+                            githubTokenValid == false -> {
+                                Text(
+                                    text = if (isRtl) "التوكن غير صالح" else "Invalid token",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
 
                 when (selectedProvider) {
                     HostingProvider.FREE_INSTANT -> Unit
@@ -373,6 +475,17 @@ fun HostingDeploySheet(
                                 }
                                 TextButton(onClick = { onShowQr(deployState.url) }) { Text("QR") }
                             }
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedGlowButton(
+                                text = if (isRtl) "بناء APK مجاني عبر PWABuilder" else "Build Free APK via PWABuilder",
+                                icon = Icons.Rounded.Android,
+                                onClick = {
+                                    val encoded = URLEncoder.encode(deployState.url, "UTF-8")
+                                    onOpenUrl("https://www.pwabuilder.com/reportcard?site=$encoded")
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pwabuilder_reportcard_button",
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
