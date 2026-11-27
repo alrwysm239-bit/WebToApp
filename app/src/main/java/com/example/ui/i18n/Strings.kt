@@ -174,6 +174,9 @@ data class WebForgeStrings(
     val homeBuildApkSubtitle: String,
     val homeBuildIosTitle: String,
     val homeBuildIosSubtitle: String,
+    val freeWebBuilderTitle: String,
+    val freeWebBuilderSubtitle: String,
+    val openWebBuilderBtn: String,
 )
 
 val ArabicStrings = WebForgeStrings(
@@ -209,10 +212,10 @@ val ArabicStrings = WebForgeStrings(
     websiteCardSubtitle = "GitHub Pages • Netlify • Vercel • Cloudflare • Firebase",
     singleHtmlTitle = "ملف HTML واحد مدمج",
     singleHtmlSubtitle = "دمج CSS وJS والصور كـ Base64 داخل ملف واحد",
-    androidApkCardTitle = "تطبيق أندرويد (Capacitor / APK)",
-    androidApkCardSubtitle = "مشروع كامل + GitHub Actions لبناء APK وAAB + TWA",
-    iosDesktopTitle = "مشروع iOS وسطح المكتب",
-    iosDesktopSubtitle = "تصدير Capacitor iOS أو Electron Desktop",
+    androidApkCardTitle = "بناء تطبيق أندرويد APK مباشرة",
+    androidApkCardSubtitle = "توليد وتوقيع APK حقيقي جاهز للتثبيت (بدون GitHub أو توكن)",
+    iosDesktopTitle = "تطبيق آيفون iOS وسطح المكتب",
+    iosDesktopSubtitle = "ملف تثبيت مباشر للآيفون (.mobileconfig) + مشروع Xcode",
     pwaCardTitle = "تطبيق ويب تقدمي (PWA)",
     pwaCardSubtitle = "Manifest + Service Worker + كل أحجام الأيقونات",
     storePackTitle = "حزمة النشر للمتاجر",
@@ -246,7 +249,7 @@ val ArabicStrings = WebForgeStrings(
     openUrl = "فتح",
     shareZip = "مشاركة ZIP",
     saveZipToDevice = "حفظ على الجهاز",
-    androidConfigTitle = "تجهيز تطبيق أندرويد",
+    androidConfigTitle = "استوديو بناء APK المباشر",
     appDisplayNameLabel = "اسم التطبيق",
     packageNameLabel = "معرّف الحزمة (Package ID)",
     screenColorLabel = "لون البداية وشريط الحالة",
@@ -345,6 +348,9 @@ val ArabicStrings = WebForgeStrings(
     homeBuildApkSubtitle = "بدون GitHub أو مفاتيح أو توكن — من كود HTML أو رابط موقعك",
     homeBuildIosTitle = "إنشاء تطبيق آيفون iOS",
     homeBuildIosSubtitle = "ملف تثبيت مباشر للآيفون أو مشروع Xcode من HTML أو رابط",
+    freeWebBuilderTitle = "موقع البناء المجاني (Android & iOS Online)",
+    freeWebBuilderSubtitle = "تحويل HTML أو رابط الموقع إلى APK وiOS عبر بوابة الويب المجانية داخل التطبيق",
+    openWebBuilderBtn = "فتح بوابة البناء المجانية",
 )
 
 val EnglishStrings = WebForgeStrings(
@@ -516,6 +522,9 @@ val EnglishStrings = WebForgeStrings(
     homeBuildApkSubtitle = "No GitHub, no keys, no token — from HTML code or Website URL",
     homeBuildIosTitle = "Create iPhone iOS App",
     homeBuildIosSubtitle = "Direct iOS app profile or Xcode project from HTML or URL",
+    freeWebBuilderTitle = "Free Online App Builder Portal",
+    freeWebBuilderSubtitle = "Convert HTML / Website URL to Android & iOS via free built-in web portal",
+    openWebBuilderBtn = "Open Free Builder Portal",
 )
 
 val LocalStrings = staticCompositionLocalOf { ArabicStrings }

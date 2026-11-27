@@ -56,6 +56,14 @@ object HtmlToolkit {
         return cleaned.ifEmpty { "webforge-site" }
     }
 
+    fun safeFileName(input: String): String {
+        val cleaned = input.trim()
+            .replace(Regex("""[/\\:*?"<>|\u0000-\u001F]+"""), " ")
+            .replace(Regex("""\s+"""), "-")
+            .trim('-', '.')
+        return cleaned.take(64).ifEmpty { "webforge-app" }
+    }
+
     fun toSafePackageSegment(input: String): String {
         val cleaned = input.lowercase(Locale.US)
             .replace(Regex("[^a-z0-9]"), "")
@@ -242,48 +250,57 @@ object HtmlToolkit {
         hasFavicon: Boolean = true,
     ): String {
         var html = rawHtml.trim()
-        if (!html.contains("<!doctype", ignoreCase = true)) {
+        val firstScriptIdx = Regex("""<script\b""", RegexOption.IGNORE_CASE).find(html)?.range?.first ?: html.length
+        val preamble = html.substring(0, firstScriptIdx)
+
+        if (!preamble.contains("<!doctype", ignoreCase = true)) {
             html = "<!DOCTYPE html>\n$html"
         }
-        if (!html.contains("<html", ignoreCase = true)) {
+        val curScriptIdx = Regex("""<script\b""", RegexOption.IGNORE_CASE).find(html)?.range?.first ?: html.length
+        val curPreamble = html.substring(0, curScriptIdx)
+        if (!curPreamble.contains("<html", ignoreCase = true)) {
             html = "<!DOCTYPE html>\n<html lang=\"ar\" dir=\"rtl\">\n<head>\n</head>\n<body>\n$rawHtml\n</body>\n</html>"
-        } else if (!html.contains("<head", ignoreCase = true)) {
+        } else if (!curPreamble.contains("<head", ignoreCase = true)) {
             html = Regex("""(<html[^>]*>)""", RegexOption.IGNORE_CASE)
                 .replaceFirst(html, "$1\n<head>\n</head>")
         }
 
+        val headSectionMatch = Regex("""<head[^>]*>([\s\S]*?)</head>""", RegexOption.IGNORE_CASE).find(html)
+        val headerScope = headSectionMatch?.value ?: html.take(4096)
+
         val tagsToInject = buildString {
-            if (!html.contains("charset", ignoreCase = true)) {
+            if (!headerScope.contains("charset", ignoreCase = true)) {
                 appendLine("  <meta charset=\"UTF-8\">")
             }
-            if (!html.contains("name=\"viewport\"", ignoreCase = true) &&
-                !html.contains("name='viewport'", ignoreCase = true)
+            if (!headerScope.contains("name=\"viewport\"", ignoreCase = true) &&
+                !headerScope.contains("name='viewport'", ignoreCase = true)
             ) {
                 appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\">")
             }
-            if (!html.contains("<title", ignoreCase = true)) {
+            if (!headerScope.contains("<title", ignoreCase = true)) {
                 appendLine("  <title>${escapeHtmlAttr(title)}</title>")
             }
-            if (!html.contains("name=\"description\"", ignoreCase = true)) {
+            if (!headerScope.contains("name=\"description\"", ignoreCase = true)) {
                 appendLine("  <meta name=\"description\" content=\"${escapeHtmlAttr(description)}\">")
             }
-            if (!html.contains("property=\"og:title\"", ignoreCase = true)) {
+            if (!headerScope.contains("property=\"og:title\"", ignoreCase = true)) {
                 appendLine("  <meta property=\"og:title\" content=\"${escapeHtmlAttr(title)}\">")
             }
-            if (!html.contains("property=\"og:description\"", ignoreCase = true)) {
+            if (!headerScope.contains("property=\"og:description\"", ignoreCase = true)) {
                 appendLine("  <meta property=\"og:description\" content=\"${escapeHtmlAttr(description)}\">")
             }
-            if (!html.contains("name=\"theme-color\"", ignoreCase = true)) {
+            if (!headerScope.contains("name=\"theme-color\"", ignoreCase = true)) {
                 appendLine("  <meta name=\"theme-color\" content=\"${escapeHtmlAttr(themeColorHex)}\">")
             }
-            if (hasFavicon && !html.contains("rel=\"icon\"", ignoreCase = true)) {
+            if (hasFavicon && !headerScope.contains("rel=\"icon\"", ignoreCase = true)) {
                 appendLine("  <link rel=\"icon\" type=\"image/png\" href=\"favicon.png\">")
             }
         }
 
         if (tagsToInject.isBlank()) return html
 
-        val headMatch = Regex("""<head[^>]*>""", RegexOption.IGNORE_CASE).find(html)
+        val headSearchLimit = Regex("""<script\b""", RegexOption.IGNORE_CASE).find(html)?.range?.first ?: html.length
+        val headMatch = Regex("""<head[^>]*>""", RegexOption.IGNORE_CASE).find(html.substring(0, headSearchLimit))
         return if (headMatch != null) {
             html.replaceRange(headMatch.range, "${headMatch.value}\n$tagsToInject")
         } else {

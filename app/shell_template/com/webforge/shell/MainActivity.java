@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -21,6 +22,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -33,6 +35,7 @@ import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
@@ -40,6 +43,7 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -47,17 +51,25 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
 public class MainActivity extends Activity {
 
+    private static final String TAG = "WebForgeShell";
+    private static final String VIRTUAL_HOST = "webforge.app";
+    private static final String VIRTUAL_HOME_URL = "https://" + VIRTUAL_HOST + "/index.html";
     private static final int REQ_FILE_CHOOSER = 4101;
     private static final int REQ_PERMISSIONS = 4102;
 
@@ -91,7 +103,7 @@ public class MainActivity extends Activity {
     private String backBehavior = "history";
     private String customUserAgent = "";
     private boolean splashEnabled = true;
-    private long splashDurationMs = 1600L;
+    private long splashDurationMs = 1500L;
     private String splashTitle = "";
     private String splashSubtitle = "";
     private String splashBgColor = "#0C0A20";
@@ -99,110 +111,153 @@ public class MainActivity extends Activity {
     private boolean showSplashSpinner = true;
 
     private long lastBackPressMs = 0L;
+    private long createTimeMs = 0L;
     private boolean splashDismissed = false;
     private float pullStartY = -1f;
-    private String homeTargetUrl = "file:///android_asset/www/index.html";
+    private String homeTargetUrl = VIRTUAL_HOME_URL;
 
     @SuppressLint({"SetJavaScriptEnabled", "ClickableViewAccessibility"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        try {
+            requestWindowFeature(Window.FEATURE_NO_TITLE);
+        } catch (Throwable ignored) {
+        }
         super.onCreate(savedInstanceState);
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        loadConfig();
+        createTimeMs = System.currentTimeMillis();
 
-        applyOrientation(orientationMode);
-        applyWindowStyling();
+        try {
+            loadConfig();
+            applyOrientation(orientationMode);
 
-        int bgColorInt = safeParseColor(themeColor, 0xFF0C0A20);
-        int splashBgInt = safeParseColor(splashBgColor, 0xFF0C0A20);
-        int accentInt = safeParseColor(splashAccentColor, 0xFF00C6FF);
+            int splashBgInt = safeParseColor(splashBgColor, 0xFF0C0A20);
+            int accentInt = safeParseColor(splashAccentColor, 0xFF00C6FF);
 
-        rootLayout = new FrameLayout(this);
-        rootLayout.setBackgroundColor(splashBgInt);
+            rootLayout = new FrameLayout(this);
+            rootLayout.setBackgroundColor(splashBgInt);
 
-        webView = new WebView(this);
-        webView.setBackgroundColor(bgColorInt);
-        configureWebSettings();
+            webView = new WebView(this);
+            webView.setBackgroundColor(splashBgInt);
+            webView.setLayoutParams(new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+            configureWebSettings();
 
-        if (pullToRefresh) {
-            webView.setOnTouchListener(new View.OnTouchListener() {
-                @Override
-                public boolean onTouch(View v, MotionEvent event) {
-                    if (event.getAction() == MotionEvent.ACTION_DOWN && webView.getScrollY() == 0) {
-                        pullStartY = event.getRawY();
-                    } else if (event.getAction() == MotionEvent.ACTION_UP && pullStartY > 0f) {
-                        float delta = event.getRawY() - pullStartY;
-                        pullStartY = -1f;
-                        if (delta > 260f && webView.getScrollY() == 0) {
-                            webView.reload();
-                            Toast.makeText(MainActivity.this, "↻ Refreshing...", Toast.LENGTH_SHORT).show();
+            if (pullToRefresh) {
+                webView.setOnTouchListener(new View.OnTouchListener() {
+                    @Override
+                    public boolean onTouch(View v, MotionEvent event) {
+                        if (event.getAction() == MotionEvent.ACTION_DOWN && webView.getScrollY() == 0) {
+                            pullStartY = event.getRawY();
+                        } else if (event.getAction() == MotionEvent.ACTION_UP && pullStartY > 0f) {
+                            float delta = event.getRawY() - pullStartY;
+                            pullStartY = -1f;
+                            if (delta > 280f && webView.getScrollY() == 0) {
+                                webView.reload();
+                                Toast.makeText(MainActivity.this, "↻ Refreshing...", Toast.LENGTH_SHORT).show();
+                            }
+                        } else if (event.getAction() == MotionEvent.ACTION_CANCEL) {
+                            pullStartY = -1f;
                         }
-                    } else if (event.getAction() == MotionEvent.ACTION_CANCEL) {
-                        pullStartY = -1f;
+                        return false;
                     }
-                    return false;
-                }
-            });
-        }
+                });
+            }
 
-        rootLayout.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+            rootLayout.addView(webView);
 
-        // Slim top progress bar
-        loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        loadingBar.setMax(100);
-        loadingBar.setProgressTintList(ColorStateList.valueOf(accentInt));
-        loadingBar.setVisibility(showProgressBar ? View.VISIBLE : View.GONE);
-        int barHeight = dpToPx(3);
-        rootLayout.addView(loadingBar, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, barHeight, Gravity.TOP
-        ));
+            loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            loadingBar.setMax(100);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                loadingBar.setProgressTintList(ColorStateList.valueOf(accentInt));
+            }
+            loadingBar.setVisibility(showProgressBar ? View.VISIBLE : View.GONE);
+            rootLayout.addView(loadingBar, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(3), Gravity.TOP
+            ));
 
-        // Fullscreen HTML5 video container
-        customVideoContainer = new FrameLayout(this);
-        customVideoContainer.setBackgroundColor(Color.BLACK);
-        customVideoContainer.setVisibility(View.GONE);
-        rootLayout.addView(customVideoContainer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ));
-
-        // Optional floating utility bar (Back, Home, Reload, Rotate, Fullscreen)
-        if (showFloatingBar) {
-            floatingBar = buildFloatingBar(accentInt);
-            FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
-            );
-            barLp.bottomMargin = dpToPx(18);
-            rootLayout.addView(floatingBar, barLp);
-        }
-
-        // Splash Screen Overlay
-        if (splashEnabled) {
-            splashOverlay = buildSplashOverlay(splashBgInt, accentInt);
-            rootLayout.addView(splashOverlay, new FrameLayout.LayoutParams(
+            customVideoContainer = new FrameLayout(this);
+            customVideoContainer.setBackgroundColor(Color.BLACK);
+            customVideoContainer.setVisibility(View.GONE);
+            rootLayout.addView(customVideoContainer, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             ));
-            handler.postDelayed(new Runnable() {
+
+            if (showFloatingBar) {
+                floatingBar = buildFloatingBar(accentInt);
+                FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
+                );
+                barLp.bottomMargin = dpToPx(18);
+                rootLayout.addView(floatingBar, barLp);
+            }
+
+            if (splashEnabled) {
+                splashOverlay = buildSplashOverlay(splashBgInt, accentInt);
+                rootLayout.addView(splashOverlay, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                ));
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        dismissSplash();
+                    }
+                }, Math.max(500L, splashDurationMs));
+            } else {
+                splashDismissed = true;
+            }
+
+            setContentView(rootLayout);
+            applyWindowStyling();
+            rootLayout.post(new Runnable() {
                 @Override
                 public void run() {
-                    dismissSplash();
+                    applyFullscreenInternal(isFullscreen);
                 }
-            }, Math.max(500L, splashDurationMs));
-        } else {
-            splashDismissed = true;
+            });
+
+            homeTargetUrl = ("url".equalsIgnoreCase(sourceMode) && startUrl != null && !startUrl.trim().isEmpty())
+                    ? normalizeUrl(startUrl.trim())
+                    : VIRTUAL_HOME_URL;
+
+            webView.loadUrl(homeTargetUrl);
+            requestMissingManifestPermissions();
+        } catch (Throwable err) {
+            Log.e(TAG, "Initialization error", err);
+            showSafeFallbackError(err);
         }
+    }
 
-        setContentView(rootLayout);
+    private void showSafeFallbackError(Throwable err) {
+        try {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setBackgroundColor(0xFF0C0A20);
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setPadding(dpToPx(24), dpToPx(36), dpToPx(24), dpToPx(24));
 
-        homeTargetUrl = ("url".equalsIgnoreCase(sourceMode) && startUrl != null && !startUrl.trim().isEmpty())
-                ? normalizeUrl(startUrl.trim())
-                : "file:///android_asset/www/index.html";
+            TextView title = new TextView(this);
+            title.setText(appName + " — Runtime Diagnostics");
+            title.setTextColor(0xFF00C6FF);
+            title.setTextSize(18f);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            box.addView(title);
 
-        webView.loadUrl(homeTargetUrl);
-        requestMissingManifestPermissions();
+            TextView msg = new TextView(this);
+            String detail = err.getClass().getSimpleName() + ": " + String.valueOf(err.getMessage());
+            msg.setText(detail);
+            msg.setTextColor(0xFFF4F6FF);
+            msg.setTextSize(14f);
+            msg.setTextIsSelectable(true);
+            msg.setPadding(0, dpToPx(12), 0, dpToPx(12));
+            box.addView(msg);
+
+            scroll.addView(box);
+            setContentView(scroll);
+        } catch (Throwable ignored) {
+        }
     }
 
     private void loadConfig() {
@@ -234,13 +289,13 @@ public class MainActivity extends Activity {
             backBehavior = obj.optString("backBehavior", "history");
             customUserAgent = obj.optString("customUserAgent", "");
             splashEnabled = obj.optBoolean("splashEnabled", true);
-            splashDurationMs = obj.optLong("splashDurationMs", 1600L);
+            splashDurationMs = obj.optLong("splashDurationMs", 1500L);
             splashTitle = obj.optString("splashTitle", appName);
             splashSubtitle = obj.optString("splashSubtitle", "");
             splashBgColor = obj.optString("splashBgColor", "#0C0A20");
             splashAccentColor = obj.optString("splashAccentColor", "#00C6FF");
             showSplashSpinner = obj.optBoolean("showSplashSpinner", true);
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
     }
 
@@ -248,6 +303,8 @@ public class MainActivity extends Activity {
     private void configureWebSettings() {
         WebSettings ws = webView.getSettings();
         ws.setJavaScriptEnabled(true);
+        ws.setJavaScriptCanOpenWindowsAutomatically(true);
+        ws.setSupportMultipleWindows(false);
         ws.setDomStorageEnabled(true);
         ws.setDatabaseEnabled(true);
         ws.setAllowFileAccess(true);
@@ -260,7 +317,7 @@ public class MainActivity extends Activity {
         ws.setSupportZoom(enableZoom);
         ws.setBuiltInZoomControls(enableZoom);
         ws.setDisplayZoomControls(false);
-        ws.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         ws.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         if (customUserAgent != null && !customUserAgent.trim().isEmpty()) {
@@ -271,8 +328,11 @@ public class MainActivity extends Activity {
             );
         }
 
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        try {
+            CookieManager.getInstance().setAcceptCookie(true);
+            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        } catch (Throwable ignored) {
+        }
 
         webView.addJavascriptInterface(new WebForgeBridge(), "WebForgeNative");
 
@@ -282,7 +342,7 @@ public class MainActivity extends Activity {
                 try {
                     DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
                     req.setMimeType(mimeType);
-                    req.addRequestHeader("User-Agent", userAgent);
+                    if (userAgent != null) req.addRequestHeader("User-Agent", userAgent);
                     String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
                     req.setTitle(fileName);
                     req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
@@ -291,27 +351,52 @@ public class MainActivity extends Activity {
                     if (dm != null) {
                         dm.enqueue(req);
                         Toast.makeText(MainActivity.this, "Downloading " + fileName, Toast.LENGTH_SHORT).show();
+                        return;
                     }
-                } catch (Exception e) {
-                    openExternalIntent(url);
+                } catch (Throwable ignored) {
                 }
+                openExternalIntent(url);
             }
         });
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                try {
+                    Uri uri = request != null ? request.getUrl() : null;
+                    if (uri != null && VIRTUAL_HOST.equalsIgnoreCase(uri.getHost())) {
+                        String rawPath = uri.getPath();
+                        String rel = (rawPath == null || rawPath.isEmpty() || "/".equals(rawPath))
+                                ? "index.html"
+                                : rawPath.replaceFirst("^/+", "");
+                        if (rel.contains("..")) {
+                            return null;
+                        }
+                        WebResourceResponse resp = openAssetResponse("www/" + rel);
+                        if (resp != null) return resp;
+                        if (!rel.contains(".")) {
+                            return openAssetResponse("www/index.html");
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
-                if (!scheme.equals("http") && !scheme.equals("https") && !scheme.equals("file")
-                        && !scheme.equals("about") && !scheme.equals("data")) {
+                String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.US);
+                if (!"http".equals(scheme) && !"https".equals(scheme) && !"file".equals(scheme)
+                        && !"about".equals(scheme) && !"data".equals(scheme) && !"blob".equals(scheme)) {
                     openExternalIntent(uri.toString());
                     return true;
                 }
                 if (openExternalLinks && ("http".equals(scheme) || "https".equals(scheme))) {
                     String targetHost = uri.getHost();
                     String homeHost = Uri.parse(homeTargetUrl).getHost();
-                    if (targetHost != null && homeHost != null && !targetHost.equalsIgnoreCase(homeHost)) {
+                    if (targetHost != null && !VIRTUAL_HOST.equalsIgnoreCase(targetHost)
+                            && (homeHost == null || !targetHost.equalsIgnoreCase(homeHost))) {
                         openExternalIntent(uri.toString());
                         return true;
                     }
@@ -321,27 +406,30 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (showProgressBar) {
+                if (showProgressBar && loadingBar != null) {
                     loadingBar.setVisibility(View.GONE);
                 }
                 if (splashEnabled && !splashDismissed) {
+                    long elapsed = System.currentTimeMillis() - createTimeMs;
+                    long remaining = Math.max(120L, Math.min(splashDurationMs, Math.max(500L, splashDurationMs) - elapsed));
                     handler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
                             dismissSplash();
                         }
-                    }, 350L);
+                    }, remaining);
                 }
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame() && "url".equalsIgnoreCase(sourceMode)) {
+                if (request != null && request.isForMainFrame() && "url".equalsIgnoreCase(sourceMode)) {
+                    dismissSplash();
                     String safeHome = homeTargetUrl.replace("'", "\\'");
                     String offlineHtml = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1.0'>"
                             + "<style>body{margin:0;background:#0C0A20;color:#F4F6FF;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}"
                             + ".box{max-width:340px;background:#1C1840;border:1px solid #5B3DF5;border-radius:22px;padding:28px}"
-                            + "button{margin-top:18px;width:100%;padding:14px;border:none;border-radius:14px;font-weight:700;font-size:15px;color:#0C0A20;background:linear-gradient(90deg,#5B3DF5,#00C6FF)}</style></head>"
+                            + "button{margin-top:14px;width:100%;padding:14px;border:none;border-radius:14px;font-weight:700;font-size:15px;color:#0C0A20;background:linear-gradient(90deg,#5B3DF5,#00C6FF)}</style></head>"
                             + "<body><div class='box'><h2>" + escapeHtml(appName) + "</h2>"
                             + "<p style='color:#A8AED8'>تعذر تحميل الصفحة — تحقق من الاتصال بالإنترنت.<br>Unable to reach page.</p>"
                             + "<button onclick=\"location.href='" + safeHome + "'\">إعادة المحاولة / Retry</button></div></body></html>";
@@ -353,7 +441,7 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
-                if (showProgressBar) {
+                if (showProgressBar && loadingBar != null) {
                     loadingBar.setProgress(newProgress);
                     loadingBar.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
                 }
@@ -382,13 +470,28 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                request.grant(request.getResources());
+                try {
+                    request.grant(request.getResources());
+                } catch (Throwable ignored) {
+                }
             }
 
             @Override
             public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
                 Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
                 result.confirm();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                result.confirm();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, JsPromptResult result) {
+                result.confirm(defaultValue);
                 return true;
             }
 
@@ -424,9 +527,42 @@ public class MainActivity extends Activity {
         });
     }
 
+    private WebResourceResponse openAssetResponse(String assetPath) {
+        try {
+            InputStream is = getAssets().open(assetPath);
+            String mime = guessMimeType(assetPath);
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Access-Control-Allow-Origin", "*");
+            headers.put("Cache-Control", "no-cache");
+            return new WebResourceResponse(mime, "UTF-8", 200, "OK", headers, is);
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    private String guessMimeType(String path) {
+        String p = path.toLowerCase(Locale.US);
+        if (p.endsWith(".html") || p.endsWith(".htm")) return "text/html";
+        if (p.endsWith(".css")) return "text/css";
+        if (p.endsWith(".js") || p.endsWith(".mjs")) return "application/javascript";
+        if (p.endsWith(".json") || p.endsWith(".webmanifest")) return "application/json";
+        if (p.endsWith(".svg")) return "image/svg+xml";
+        if (p.endsWith(".png")) return "image/png";
+        if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+        if (p.endsWith(".webp")) return "image/webp";
+        if (p.endsWith(".gif")) return "image/gif";
+        if (p.endsWith(".woff2")) return "font/woff2";
+        if (p.endsWith(".woff")) return "font/woff";
+        if (p.endsWith(".ttf")) return "font/ttf";
+        if (p.endsWith(".mp4")) return "video/mp4";
+        if (p.endsWith(".mp3")) return "audio/mpeg";
+        return "application/octet-stream";
+    }
+
     private FrameLayout buildSplashOverlay(int bgInt, int accentInt) {
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(bgInt);
+        overlay.setClickable(true);
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -441,7 +577,7 @@ public class MainActivity extends Activity {
             if (bmp != null) {
                 logo.setImageBitmap(bmp);
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
         int iconSz = dpToPx(104);
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSz, iconSz);
@@ -451,7 +587,7 @@ public class MainActivity extends Activity {
         String displayTitle = (splashTitle != null && !splashTitle.trim().isEmpty()) ? splashTitle : appName;
         TextView titleView = new TextView(this);
         titleView.setText(displayTitle);
-        titleView.setTextColor(Color.WHITE);
+        titleView.setTextColor(isLightColor(bgInt) ? 0xFF0C0A20 : Color.WHITE);
         titleView.setTextSize(22f);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
         titleView.setGravity(Gravity.CENTER);
@@ -460,7 +596,7 @@ public class MainActivity extends Activity {
         if (splashSubtitle != null && !splashSubtitle.trim().isEmpty()) {
             TextView subView = new TextView(this);
             subView.setText(splashSubtitle);
-            subView.setTextColor(0xFFA8AED8);
+            subView.setTextColor(isLightColor(bgInt) ? 0xFF444868 : 0xFFA8AED8);
             subView.setTextSize(14f);
             subView.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
@@ -472,7 +608,9 @@ public class MainActivity extends Activity {
 
         if (showSplashSpinner) {
             ProgressBar spinner = new ProgressBar(this);
-            spinner.setIndeterminateTintList(ColorStateList.valueOf(accentInt));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                spinner.setIndeterminateTintList(ColorStateList.valueOf(accentInt));
+            }
             LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(dpToPx(32), dpToPx(32));
             spLp.topMargin = dpToPx(22);
             col.addView(spinner, spLp);
@@ -493,16 +631,19 @@ public class MainActivity extends Activity {
         bg.setCornerRadius(dpToPx(24));
         bg.setStroke(dpToPx(1), accentInt);
         bar.setBackground(bg);
-        bar.setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(4));
+        bar.setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(4));
 
         bar.addView(makeBarBtn("◀", accentInt, new View.OnClickListener() {
-            @Override public void onClick(View v) { if (webView.canGoBack()) webView.goBack(); }
+            @Override public void onClick(View v) { if (webView != null && webView.canGoBack()) webView.goBack(); }
+        }));
+        bar.addView(makeBarBtn("▶", accentInt, new View.OnClickListener() {
+            @Override public void onClick(View v) { if (webView != null && webView.canGoForward()) webView.goForward(); }
         }));
         bar.addView(makeBarBtn("⌂", Color.WHITE, new View.OnClickListener() {
-            @Override public void onClick(View v) { webView.loadUrl(homeTargetUrl); }
+            @Override public void onClick(View v) { if (webView != null) webView.loadUrl(homeTargetUrl); }
         }));
         bar.addView(makeBarBtn("↻", accentInt, new View.OnClickListener() {
-            @Override public void onClick(View v) { webView.reload(); }
+            @Override public void onClick(View v) { if (webView != null) webView.reload(); }
         }));
         bar.addView(makeBarBtn("⟳", 0xFF34E0A1, new View.OnClickListener() {
             @Override public void onClick(View v) { toggleOrientationLive(); }
@@ -522,7 +663,7 @@ public class MainActivity extends Activity {
         tv.setTextColor(color);
         tv.setTextSize(16f);
         tv.setGravity(Gravity.CENTER);
-        tv.setMinWidth(dpToPx(42));
+        tv.setMinWidth(dpToPx(40));
         tv.setMinHeight(dpToPx(38));
         tv.setOnClickListener(listener);
         return tv;
@@ -530,7 +671,7 @@ public class MainActivity extends Activity {
 
     private void toggleOrientationLive() {
         int current = getResources().getConfiguration().orientation;
-        if (current == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+        if (current == Configuration.ORIENTATION_LANDSCAPE) {
             orientationMode = "portrait";
         } else {
             orientationMode = "landscape";
@@ -541,57 +682,79 @@ public class MainActivity extends Activity {
     private void dismissSplash() {
         if (splashDismissed || splashOverlay == null) return;
         splashDismissed = true;
-        splashOverlay.animate().alpha(0f).setDuration(260L).withEndAction(new Runnable() {
-            @Override
-            public void run() {
-                splashOverlay.setVisibility(View.GONE);
-            }
-        }).start();
+        try {
+            splashOverlay.animate().alpha(0f).setDuration(260L).withEndAction(new Runnable() {
+                @Override
+                public void run() {
+                    splashOverlay.setVisibility(View.GONE);
+                }
+            }).start();
+        } catch (Throwable e) {
+            splashOverlay.setVisibility(View.GONE);
+        }
     }
 
     private void applyOrientation(String mode) {
-        if ("portrait".equalsIgnoreCase(mode)) {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        } else if ("landscape".equalsIgnoreCase(mode)) {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-        } else {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        try {
+            if ("portrait".equalsIgnoreCase(mode)) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            } else if ("landscape".equalsIgnoreCase(mode)) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+            } else {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
     private void applyWindowStyling() {
-        Window w = getWindow();
-        w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-        w.setStatusBarColor(safeParseColor(statusBarColor, 0xFF0C0A20));
-        w.setNavigationBarColor(safeParseColor(navBarColor, 0xFF0C0A20));
-        if (keepScreenOn) {
-            w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        try {
+            Window w = getWindow();
+            w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            int statusColor = safeParseColor(statusBarColor, 0xFF0C0A20);
+            int navColor = safeParseColor(navBarColor, 0xFF0C0A20);
+            w.setStatusBarColor(statusColor);
+            w.setNavigationBarColor(navColor);
+            if (keepScreenOn) {
+                w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsController c = w.getInsetsController();
+                if (c != null) {
+                    int lightStatus = isLightColor(statusColor) ? WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS : 0;
+                    c.setSystemBarsAppearance(lightStatus, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
+                }
+            }
+            applyFullscreenInternal(isFullscreen);
+        } catch (Throwable ignored) {
         }
-        applyFullscreenInternal(isFullscreen);
     }
 
     private void applyFullscreenInternal(boolean enable) {
-        Window w = getWindow();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowInsetsController controller = w.getInsetsController();
-            if (controller != null) {
-                if (enable) {
-                    controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                    controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                } else {
-                    controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+        try {
+            Window w = getWindow();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsController controller = w.getInsetsController();
+                if (controller != null) {
+                    if (enable) {
+                        controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                        controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    } else {
+                        controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                    }
                 }
+            } else {
+                int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+                if (enable) {
+                    flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+                }
+                w.getDecorView().setSystemUiVisibility(flags);
             }
-        } else {
-            int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            if (enable) {
-                flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
-            }
-            w.getDecorView().setSystemUiVisibility(flags);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -616,7 +779,7 @@ public class MainActivity extends Activity {
             if (!needed.isEmpty()) {
                 requestPermissions(needed.toArray(new String[0]), REQ_PERMISSIONS);
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
     }
 
@@ -624,7 +787,7 @@ public class MainActivity extends Activity {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             startActivity(intent);
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
     }
 
@@ -635,10 +798,15 @@ public class MainActivity extends Activity {
         return "https://" + url;
     }
 
+    private boolean isLightColor(int color) {
+        double luma = (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255.0;
+        return luma > 0.65;
+    }
+
     private int safeParseColor(String hex, int fallback) {
         try {
             return Color.parseColor(hex);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             return fallback;
         }
     }
@@ -664,11 +832,11 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (customVideoView != null && webView.getWebChromeClient() != null) {
+        if (customVideoView != null && webView != null && webView.getWebChromeClient() != null) {
             webView.getWebChromeClient().onHideCustomView();
             return;
         }
-        if (webView.canGoBack()) {
+        if (webView != null && webView.canGoBack()) {
             webView.goBack();
             return;
         }
@@ -704,17 +872,25 @@ public class MainActivity extends Activity {
                         v.vibrate(ms);
                     }
                 }
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         }
 
         @JavascriptInterface
         public void share(String title, String text) {
-            Intent i = new Intent(Intent.ACTION_SEND);
-            i.setType("text/plain");
-            i.putExtra(Intent.EXTRA_SUBJECT, title);
-            i.putExtra(Intent.EXTRA_TEXT, text);
-            startActivity(Intent.createChooser(i, title));
+            try {
+                Intent i = new Intent(Intent.ACTION_SEND);
+                i.setType("text/plain");
+                i.putExtra(Intent.EXTRA_SUBJECT, title);
+                i.putExtra(Intent.EXTRA_TEXT, text);
+                startActivity(Intent.createChooser(i, title));
+            } catch (Throwable ignored) {
+            }
+        }
+
+        @JavascriptInterface
+        public void openExternal(String url) {
+            openExternalIntent(url);
         }
 
         @JavascriptInterface
@@ -740,7 +916,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void reload() {
             runOnUiThread(new Runnable() {
-                @Override public void run() { webView.reload(); }
+                @Override public void run() {
+                    if (webView != null) webView.reload();
+                }
             });
         }
     }

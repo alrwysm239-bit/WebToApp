@@ -88,13 +88,20 @@ object OnDeviceApkBuilder {
         )
 
         if (config.sourceMode == AppSourceMode.HTML) {
-            val preparedHtml = HtmlToolkit.injectViewportSeoAndIcon(
-                rawHtml = html,
-                title = safeAppName,
-                description = config.seoDescription,
-                themeColorHex = config.themeColorHex,
-                hasFavicon = false,
-            )
+            val nonBlankHtml = html.ifBlank { HtmlToolkit.defaultStarterHtml(isArabic = true) }
+            val hasFullStructure = nonBlankHtml.contains("<html", ignoreCase = true) &&
+                nonBlankHtml.contains("viewport", ignoreCase = true)
+            val preparedHtml = if (hasFullStructure) {
+                nonBlankHtml
+            } else {
+                HtmlToolkit.injectViewportSeoAndIcon(
+                    rawHtml = nonBlankHtml,
+                    title = safeAppName,
+                    description = config.seoDescription,
+                    themeColorHex = config.themeColorHex,
+                    hasFavicon = false,
+                )
+            }
             entries.add(
                 ApkSignerAndPackager.ZipInputEntry(
                     "assets/www/index.html",

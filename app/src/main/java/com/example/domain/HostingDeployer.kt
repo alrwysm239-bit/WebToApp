@@ -37,14 +37,17 @@ class HostingDeployer {
         val shipResult = runCatching {
             val shipReq = Request.Builder()
                 .url("https://ship.page/deploy")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) WebForge/2.0")
                 .header("Content-Type", "application/zip")
-                .header("Accept", "application/json")
+                .header("Accept", "application/json, text/plain, */*")
                 .post(zipBytes.toRequestBody(zipMediaType))
                 .build()
             client.newCall(shipReq).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) error("ship.page (${resp.code}): $body")
-                val url = JSONObject(body).optString("url").trim()
+                val trimmed = body.trim()
+                val url = if (trimmed.startsWith("http")) trimmed
+                else JSONObject(trimmed).optString("url").ifBlank { JSONObject(trimmed).optString("link") }.trim()
                 if (!url.startsWith("http")) error("Invalid URL from ship.page")
                 url
             }
@@ -58,6 +61,7 @@ class HostingDeployer {
         }.toString()
         val htmlShareReq = Request.Builder()
             .url("https://api.htmlshare.net/v1/publish")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) WebForge/2.0")
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .post(payload.toRequestBody(jsonMediaType))

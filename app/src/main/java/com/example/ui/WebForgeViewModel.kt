@@ -708,8 +708,8 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                 }
             }.onSuccess { apkBytes ->
                 _uiState.update { it.copy(isBuildingApk = false) }
-                val slug = HtmlToolkit.slugify(st.appConfig.appName.ifBlank { st.projectName })
-                dispatchExport("$slug.apk", "application/vnd.android.package-archive", apkBytes, saveViaSaf)
+                val safeFile = HtmlToolkit.safeFileName(st.appConfig.appName.ifBlank { st.projectName })
+                dispatchExport("$safeFile.apk", "application/vnd.android.package-archive", apkBytes, saveViaSaf)
                 emitMessage(strings().apkBuiltSuccessMsg)
             }.onFailure { err ->
                 _uiState.update { it.copy(isBuildingApk = false) }
@@ -733,8 +733,8 @@ class WebForgeViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             }.onSuccess { bytes ->
-                val slug = HtmlToolkit.slugify(st.appConfig.appName.ifBlank { st.projectName })
-                dispatchExport("$slug-ios-app.mobileconfig", "application/x-apple-aspen-config", bytes, saveViaSaf)
+                val safeFile = HtmlToolkit.safeFileName(st.appConfig.appName.ifBlank { st.projectName })
+                dispatchExport("$safeFile-ios-app.mobileconfig", "application/x-apple-aspen-config", bytes, saveViaSaf)
             }.onFailure { err ->
                 emitMessage(err.localizedMessage ?: "iOS profile export failed")
             }

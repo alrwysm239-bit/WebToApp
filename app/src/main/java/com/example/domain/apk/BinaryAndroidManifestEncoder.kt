@@ -49,7 +49,8 @@ object BinaryAndroidManifestEncoder {
 
     private const val RES_APP_NAME = 0x7f010000
     private const val RES_IC_LAUNCHER = 0x7f020000
-    private const val ANDROID_THEME_DEVICE_DEFAULT_NO_ACTION_BAR = 0x0103012b
+    // Verified from AOSP public-final.xml: 0x01030129 = Theme.DeviceDefault.NoActionBar
+    private const val ANDROID_THEME_DEVICE_DEFAULT_NO_ACTION_BAR = 0x01030129
 
     private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
@@ -196,7 +197,7 @@ object BinaryAndroidManifestEncoder {
                 AxmlAttr(ANDROID_NS, "name", ATTR_NAME, TYPE_STRING, intern("com.webforge.shell.MainActivity"), "com.webforge.shell.MainActivity"),
                 AxmlAttr(ANDROID_NS, "exported", ATTR_EXPORTED, TYPE_INT_BOOLEAN, -1),
                 AxmlAttr(ANDROID_NS, "screenOrientation", ATTR_SCREEN_ORIENTATION, TYPE_INT_DEC, screenOrientationInt),
-                AxmlAttr(ANDROID_NS, "configChanges", ATTR_CONFIG_CHANGES, TYPE_INT_HEX, 0x0ca0),
+                AxmlAttr(ANDROID_NS, "configChanges", ATTR_CONFIG_CHANGES, TYPE_INT_HEX, 0x0FB0),
             ),
             intern = ::intern,
         )

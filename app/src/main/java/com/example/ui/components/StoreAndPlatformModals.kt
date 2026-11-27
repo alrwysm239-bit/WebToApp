@@ -1,10 +1,17 @@
 package com.example.ui.components
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Base64
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.DownloadListener
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
@@ -27,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -34,7 +42,9 @@ import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.PhoneIphone
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Share
@@ -486,11 +496,15 @@ fun AppShellPreviewDialog(
     var showSplash by remember { mutableStateOf(config.splashEnabled) }
     var simulatedLandscape by remember { mutableStateOf(config.orientation == AppOrientation.LANDSCAPE) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-
-    val splashBg = remember(config.splashBgColorHex) {
-        runCatching { Color(android.graphics.Color.parseColor(config.splashBgColorHex)) }
-            .getOrDefault(Color(0xFF0C0A20))
+    val htmlBytes = remember(html) {
+        (html.ifBlank { "<html><body><h3>Empty HTML</h3></body></html>" }).toByteArray(Charsets.UTF_8)
     }
+
+    val splashBgInt = remember(config.splashBgColorHex) {
+        runCatching { android.graphics.Color.parseColor(config.splashBgColorHex) }
+            .getOrDefault(0xFF0C0A20.toInt())
+    }
+    val splashBg = Color(splashBgInt)
     val accentBg = remember(config.themeColorHex) {
         runCatching { Color(android.graphics.Color.parseColor(config.themeColorHex)) }
             .getOrDefault(Color(0xFF5B3DF5))
@@ -513,26 +527,49 @@ fun AppShellPreviewDialog(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        setBackgroundColor(splashBgInt)
                         webViewRef = this
                         settings.javaScriptEnabled = true
+                        settings.javaScriptCanOpenWindowsAutomatically = true
                         settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.allowFileAccess = true
+                        settings.allowContentAccess = true
+                        settings.mediaPlaybackRequiresUserGesture = false
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
                         settings.builtInZoomControls = config.enableZoom
                         settings.displayZoomControls = false
                         if (config.desktopMode) {
                             settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                            settings.useWideViewPort = true
-                            settings.loadWithOverviewMode = true
                         } else if (config.customUserAgent.isNotBlank()) {
                             settings.userAgentString = config.customUserAgent
                         }
+                        runCatching {
+                            CookieManager.getInstance().setAcceptCookie(true)
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        }
+                        webChromeClient = WebChromeClient()
                         webViewClient = object : WebViewClient() {
                             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                                 val url = request?.url ?: return null
-                                if (url.toString().startsWith("https://webforge.local/")) {
-                                    val rel = url.path?.trimStart('/')?.lowercase() ?: return null
-                                    val asset = latestAssets[rel] ?: return null
-                                    val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
-                                    return WebResourceResponse(asset.mimeType, "UTF-8", ByteArrayInputStream(bytes))
+                                if (url.host.equals("webforge.local", ignoreCase = true)) {
+                                    val rel = url.path?.trimStart('/')?.lowercase().orEmpty()
+                                    val cors = mapOf("Access-Control-Allow-Origin" to "*")
+                                    if (rel.isEmpty() || rel == "index.html") {
+                                        return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
+                                    }
+                                    val asset = latestAssets[rel]
+                                        ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$rel") }?.value
+                                    if (asset != null) {
+                                        val bytes = ZipArchiveManager.assetToBytes(asset) ?: return null
+                                        return WebResourceResponse(asset.mimeType, "UTF-8", 200, "OK", cors, ByteArrayInputStream(bytes))
+                                    }
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
@@ -541,7 +578,7 @@ fun AppShellPreviewDialog(
                             val u = config.sourceUrl.trim()
                             loadUrl(if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u")
                         } else {
-                            loadDataWithBaseURL("https://webforge.local/", html, "text/html", "UTF-8", null)
+                            loadUrl("https://webforge.local/index.html")
                         }
                     }
                 },
@@ -568,6 +605,9 @@ fun AppShellPreviewDialog(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { if (webViewRef?.canGoBack() == true) webViewRef?.goBack() }) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
                         IconButton(onClick = { simulatedLandscape = !simulatedLandscape }) {
                             Icon(Icons.Rounded.ScreenRotation, strings.rotateScreen, tint = if (simulatedLandscape) accentBg else Color.White, modifier = Modifier.size(18.dp))
                         }
@@ -585,6 +625,151 @@ fun AppShellPreviewDialog(
                 modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
             ) {
                 Icon(Icons.Rounded.Close, strings.close, tint = Color.White, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun FreeWebBuilderPortalDialog(
+    publishedUrl: String?,
+    isRtl: Boolean,
+    isOffline: Boolean,
+    onPublishFreeFirst: () -> Unit,
+    onCopyUrl: (String) -> Unit,
+    onOpenExternal: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    val ext = LocalWebForgeColors.current
+    val portals = remember {
+        listOf(
+            "PWABuilder (Microsoft)" to "https://www.pwabuilder.com/",
+            "WebIntoApp (APK/iOS)" to "https://www.webintoapp.com/app-maker",
+        )
+    }
+    var selectedPortalIdx by remember { mutableStateOf(0) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    val activePortalUrl = portals[selectedPortalIdx].second
+
+    LaunchedEffect(activePortalUrl) {
+        webViewRef?.loadUrl(activePortalUrl)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 4.dp) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Rounded.Public, null, tint = ext.accent, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = strings.freeWebBuilderTitle,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { if (webViewRef?.canGoBack() == true) webViewRef?.goBack() }) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = ext.accent)
+                            }
+                            IconButton(onClick = { webViewRef?.reload() }) {
+                                Icon(Icons.Rounded.Refresh, strings.reloadPreview, tint = ext.accent)
+                            }
+                            IconButton(onClick = { onOpenExternal(webViewRef?.url ?: activePortalUrl) }) {
+                                Icon(Icons.Rounded.OpenInBrowser, strings.openUrl, tint = ext.accent)
+                            }
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Rounded.Close, strings.close)
+                            }
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        portals.forEachIndexed { idx, (label, _) ->
+                            FilterChip(
+                                selected = selectedPortalIdx == idx,
+                                onClick = { selectedPortalIdx = idx },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+
+                    if (!publishedUrl.isNullOrBlank()) {
+                        Surface(
+                            color = ext.success.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, ext.success.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = publishedUrl,
+                                    style = TextStyle(fontFamily = MonoFontFamily, fontSize = 11.5.sp, color = ext.success),
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { onCopyUrl(publishedUrl) }) {
+                                    Text(strings.copyUrl, color = ext.success)
+                                }
+                            }
+                        }
+                    } else if (!isOffline) {
+                        TextButton(onClick = onPublishFreeFirst) {
+                            Text(
+                                text = if (isRtl) "انشر كود HTML الآن مجاناً لنسخ الرابط واستخدامه في البوابة ↗" else "Publish HTML free first to get a URL for the portal ↗",
+                                color = ext.accent,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (isOffline) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(strings.offlineDeployBlocked, color = ext.warning)
+                }
+            } else {
+                AndroidView(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            webViewRef = this
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            runCatching {
+                                CookieManager.getInstance().setAcceptCookie(true)
+                                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                            }
+                            setDownloadListener(DownloadListener { url, _, _, _, _ ->
+                                runCatching {
+                                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                }
+                            })
+                            webChromeClient = WebChromeClient()
+                            webViewClient = WebViewClient()
+                            loadUrl(activePortalUrl)
+                        }
+                    },
+                )
             }
         }
     }

@@ -501,9 +501,19 @@ fun LiveHtmlWebView(
             .testTag("live_preview_webview"),
         factory = { context ->
             WebView(context).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                setBackgroundColor(0xFF0C0A20.toInt())
                 settings.javaScriptEnabled = true
+                settings.javaScriptCanOpenWindowsAutomatically = true
                 settings.domStorageEnabled = true
-                settings.allowFileAccess = false
+                settings.databaseEnabled = true
+                settings.allowFileAccess = true
+                settings.allowContentAccess = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
                 settings.builtInZoomControls = true
@@ -531,6 +541,7 @@ fun LiveHtmlWebView(
                 WebSettings.LOAD_DEFAULT
             }
 
+            val htmlBytes = html.toByteArray(Charsets.UTF_8)
             webView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView?,
@@ -538,7 +549,11 @@ fun LiveHtmlWebView(
                 ): WebResourceResponse? {
                     val url = request?.url ?: return null
                     if (url.toString().startsWith(LOCAL_BASE_URL)) {
-                        val relPath = url.path?.trimStart('/')?.lowercase() ?: return null
+                        val relPath = url.path?.trimStart('/')?.lowercase().orEmpty()
+                        val cors = mapOf("Access-Control-Allow-Origin" to "*")
+                        if (relPath.isEmpty() || relPath == "index.html") {
+                            return WebResourceResponse("text/html", "UTF-8", 200, "OK", cors, ByteArrayInputStream(htmlBytes))
+                        }
                         val asset = latestAssets[relPath]
                             ?: latestAssets.entries.firstOrNull { it.key.endsWith("/$relPath") }?.value
                         if (asset != null) {
@@ -546,6 +561,9 @@ fun LiveHtmlWebView(
                             return WebResourceResponse(
                                 asset.mimeType,
                                 "UTF-8",
+                                200,
+                                "OK",
+                                cors,
                                 ByteArrayInputStream(bytes),
                             )
                         }
@@ -563,13 +581,7 @@ fun LiveHtmlWebView(
 
             if (lastLoadedKey.value != loadKey) {
                 lastLoadedKey.value = loadKey
-                webView.loadDataWithBaseURL(
-                    LOCAL_BASE_URL,
-                    html,
-                    "text/html",
-                    "UTF-8",
-                    null,
-                )
+                webView.loadUrl("${LOCAL_BASE_URL}index.html")
             }
         },
     )

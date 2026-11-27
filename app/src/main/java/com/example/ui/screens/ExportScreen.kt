@@ -51,6 +51,7 @@ import com.example.ui.WebForgeUiState
 import com.example.ui.components.AndroidConfigSheet
 import com.example.ui.components.AppShellPreviewDialog
 import com.example.ui.components.ExportOptionCard
+import com.example.ui.components.FreeWebBuilderPortalDialog
 import com.example.ui.components.GradientButton
 import com.example.ui.components.HostingDeploySheet
 import com.example.ui.components.IosDesktopSheet
@@ -109,6 +110,7 @@ fun ExportScreen(
     var showStorePackDialog by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
     var showAppShellPreview by remember { mutableStateOf(false) }
+    var showFreeWebBuilderPortal by remember { mutableStateOf(false) }
     var qrUrlOverride by remember { mutableStateOf<String?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(autoOpenFreeDeploy) {
@@ -240,6 +242,17 @@ fun ExportScreen(
                 icon = Icons.Rounded.PhoneIphone,
                 testTag = "export_ios_desktop_card",
                 onClick = { showIosDesktopSheet = true },
+                trailing = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionCard(
+                title = strings.freeWebBuilderTitle,
+                subtitle = strings.freeWebBuilderSubtitle,
+                badgeColor = WebForgePrimary,
+                icon = Icons.Rounded.Public,
+                testTag = "export_free_web_builder_card",
+                onClick = { showFreeWebBuilderPortal = true },
                 trailing = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -395,6 +408,26 @@ fun ExportScreen(
             assets = state.assets,
             config = state.appConfig,
             onDismiss = { showAppShellPreview = false },
+        )
+    }
+
+    if (showFreeWebBuilderPortal) {
+        FreeWebBuilderPortalDialog(
+            publishedUrl = state.publishedUrl,
+            isRtl = state.settings.language.isRtl,
+            isOffline = state.isEffectiveOffline,
+            onPublishFreeFirst = {
+                showFreeWebBuilderPortal = false
+                selectedDeployProvider = HostingProvider.FREE_INSTANT
+                showWebsiteSheet = true
+                onPublishFreeNow()
+            },
+            onCopyUrl = { url ->
+                clipboard.setText(AnnotatedString(url))
+                onCopiedFeedback()
+            },
+            onOpenExternal = onOpenUrl,
+            onDismiss = { showFreeWebBuilderPortal = false },
         )
     }
 }
